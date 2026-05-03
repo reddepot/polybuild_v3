@@ -185,8 +185,12 @@ class TestKimiP18Phase2ExecTimeout:
 class TestR3GracefulShutdown:
     def test_handle_shutdown_signal_uses_drain(self) -> None:
         src = Path("src/polybuild/orchestrator/__init__.py").read_text()
+        # Round 10.2 update [Kimi RX-001]: bounded gather drain is now
+        # awaited explicitly via _SHUTDOWN_DRAIN_TASKS instead of being
+        # fire-and-forget.
         assert "asyncio.wait(pending, timeout=2.0)" in src
-        assert "ensure_future" in src
+        assert "_SHUTDOWN_DRAIN_TASKS" in src
+        assert "asyncio.gather(*drain_tasks" in src
 
 
 # ──────────────────────────────────────────────────────────────────────

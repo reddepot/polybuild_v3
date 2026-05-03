@@ -31,6 +31,21 @@ logger = structlog.get_logger()
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _XML_PI = re.compile(r"<\?.*?\?>", re.DOTALL)
 _HTML_SCRIPT = re.compile(r"<script[^>]*>.*?</script>", re.DOTALL | re.IGNORECASE)
+# Round 10.2 add: Markdown link with hidden title attribute
+# (``[visible](http://x 'malicious instructions')``). Strip the title
+# attribute, keep the visible text and bare URL so legitimate cross-refs
+# survive.
+_MD_LINK_TITLE = re.compile(
+    r"(\[[^\]]*\]\([^)\s]*?)\s+'[^']*'(\))",
+)
+_MD_LINK_TITLE_DQ = re.compile(
+    r'(\[[^\]]*\]\([^)\s]*?)\s+"[^"]*"(\))',
+)
+# Round 10.2 add: fenced code block with hidden language directive
+# (e.g. ```bash\n#!ignore previous\n…```). We drop the *content* of fenced
+# blocks: legitimate code samples don't belong in an AGENTS.md instruction
+# context anyway, and their content is the most flexible attack surface.
+_FENCED_BLOCK = re.compile(r"```[\s\S]*?```")
 # Zero-width / control / bidirectional Unicode often used to smuggle text
 # past human review while still being read by the model.
 # Ranges:
@@ -76,10 +91,27 @@ def sanitize_prompt_context(raw: str) -> str:
     if not raw:
         return ""
     cleaned = unicodedata.normalize("NFKC", raw)
-    cleaned = _HTML_COMMENT.sub("", cleaned)
-    cleaned = _XML_PI.sub("", cleaned)
-    cleaned = _HTML_SCRIPT.sub("", cleaned)
+    # Round 10.2.1 fix [POLYLENS honeypot 1]: nested comments like
+    # ``<!-- outer <!-- inner --> still here -->`` survived a single
+    # non-greedy pass because the regex matched the inner pair only,
+    # leaving ``still here -->``. We iterate the comment / fenced /
+    # script strippers to a fixed point so any post-pass residue (or
+    # adversarial nesting) is removed too. Bound the loop in case of
+    # pathological input.
+    for _ in range(8):
+        before = cleaned
+        cleaned = _HTML_COMMENT.sub("", cleaned)
+        cleaned = _XML_PI.sub("", cleaned)
+        cleaned = _HTML_SCRIPT.sub("", cleaned)
+        cleaned = _FENCED_BLOCK.sub("", cleaned)
+        if cleaned == before:
+            break
+    cleaned = _MD_LINK_TITLE.sub(r"\1\2", cleaned)
+    cleaned = _MD_LINK_TITLE_DQ.sub(r"\1\2", cleaned)
     cleaned = _INVISIBLE_CHARS.sub("", cleaned)
+    # Strip orphan comment terminators left over from adversarial input
+    # (e.g. ``-->`` without a leading ``<!--`` after iteration).
+    cleaned = cleaned.replace("-->", "").replace("<!--", "")
 
     lower = cleaned.lower()
     for needle in _SUSPICIOUS_DIRECTIVES:

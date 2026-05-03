@@ -330,10 +330,32 @@ async def phase_8_production_smoke(
     end_time = time.time() + monitoring_window_s
 
     while time.time() < end_time:
-        round_results = await asyncio.gather(
+        # Round 10.2 fix [Kimi RX-004]: return_exceptions=True so a single
+        # query raising a non-HTTP exception (ValueError/TypeError on a
+        # malformed param) does not blow up the whole gather and lose all
+        # other results.
+        gathered: list[SmokeQueryResult | BaseException] = await asyncio.gather(
             *(_execute_golden(endpoint_url, q) for q in golden_queries),
-            return_exceptions=False,
+            return_exceptions=True,
         )
+        round_results: list[SmokeQueryResult] = []
+        for q, r in zip(golden_queries, gathered, strict=True):
+            if isinstance(r, SmokeQueryResult):
+                round_results.append(r)
+            else:
+                logger.warning(
+                    "phase_8_golden_exception_demoted_to_failed",
+                    query=q.name,
+                    error=f"{type(r).__name__}: {r}",
+                )
+                round_results.append(
+                    SmokeQueryResult(
+                        query_name=q.name,
+                        passed=False,
+                        latency_ms=0.0,
+                        error=f"{type(r).__name__}: {r}",
+                    )
+                )
         all_results.extend(round_results)
 
         # Early abort if catastrophic

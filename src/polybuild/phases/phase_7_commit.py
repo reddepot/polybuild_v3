@@ -31,13 +31,35 @@ Round 8 fix [P7-tag-force] (Grok P1):
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import errno
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import structlog
 
 from polybuild.models import BuilderResult, CommitInfo, PolybuildRun
+
+
+def _copy_cross_device_safe(src: Path, dst: Path) -> None:
+    """Copy *src* to *dst*, surviving cross-device link errors.
+
+    Round 10.2 fix [Qwen RX-003 P0]: ``shutil.copy2`` preserves metadata
+    via ``os.link``-style fast paths and raises ``OSError(EXDEV)`` when
+    the source and destination live on different volumes (common on
+    Synology NAS bind mounts). We try ``copy2`` first to retain mtime
+    where possible, then fall back to a portable byte stream.
+    """
+    try:
+        shutil.copy2(src, dst)
+    except OSError as e:
+        if e.errno not in (errno.EXDEV, errno.ENOTSUP, errno.EPERM):
+            raise
+        # Cross-device fallback: portable byte-stream copy, no metadata.
+        with src.open("rb") as fsrc, dst.open("wb") as fdst:
+            shutil.copyfileobj(fsrc, fdst)
 
 logger = structlog.get_logger()
 
@@ -130,6 +152,10 @@ Accepted / Proposed / Deprecated
 ## Alternatives considered
 <list>
 """
+    # Round 10.2 fix [Kimi RX-005]: SIGINT propagation (start_new_session)
+    # + explicit proc.kill() on timeout so a hung ``claude code`` doesn't
+    # leave an orphan that survives the run.
+    proc: asyncio.subprocess.Process | None = None
     try:
         proc = await asyncio.create_subprocess_exec(
             "claude", "code",
@@ -137,10 +163,17 @@ Accepted / Proposed / Deprecated
             "--prompt", prompt,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=(sys.platform != "win32"),
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=180)
         return stdout.decode().strip()
-    except (TimeoutError, OSError) as e:
+    except TimeoutError as e:
+        if proc is not None and proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError, OSError):
+                proc.kill()
+        logger.warning("adr_generation_timeout", error=str(e))
+        return None
+    except OSError as e:
         logger.warning("adr_generation_failed", error=str(e))
         return None
 
@@ -222,7 +255,7 @@ async def phase_7_commit(
                 continue
             target = project_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src_path, target)
+            _copy_cross_device_safe(src_path, target)
             staged_paths.append(target)
 
         # Also include the tests dir if it's separate from code_dir
@@ -242,7 +275,7 @@ async def phase_7_commit(
                     continue
                 target = project_root / "tests" / rel
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src_path, target)
+                _copy_cross_device_safe(src_path, target)
                 staged_paths.append(target)
 
         # Stage exactly the paths we copied — no `-A`.

@@ -44,6 +44,12 @@ logger = structlog.get_logger()
 # ────────────────────────────────────────────────────────────────
 
 
+# Round 10.2 fix [Kimi RX-001]: tasks created by the shutdown handler are
+# tracked here so run_polybuild() can await them explicitly in its finally
+# block, instead of relying on a fire-and-forget pattern.
+_SHUTDOWN_DRAIN_TASKS: list[asyncio.Task[None]] = []
+
+
 def _handle_shutdown_signal(sig: int, run_id: str) -> None:
     """Round 9 [SIGINT]: react to Ctrl+C / SIGTERM by cancelling all asyncio
     tasks of the current run. The orchestrator's outer `finally:` block then
@@ -71,17 +77,23 @@ def _handle_shutdown_signal(sig: int, run_id: str) -> None:
             pending.append(task)
 
     # Best-effort cooperative drain — bounded so we never block cleanup.
+    # Round 10.2 fix [Kimi RX-001 P0]: do NOT fire-and-forget the drain.
+    # Schedule it on the running loop and stash the resulting Task so the
+    # outer ``finally`` block in run_polybuild can await it before invoking
+    # phase_9 cleanup. We still suppress RuntimeError for the corner case
+    # where the loop is already closing (no possible drain).
     if pending:
         async def _drain() -> None:
             await asyncio.wait(pending, timeout=2.0)
 
-        with contextlib.suppress(RuntimeError):
-            # Loop is already closing → no fallback gather possible.
-            # Stash the future on the function object to satisfy RUF006
-            # (no fire-and-forget tasks).
-            _handle_shutdown_signal._drain_task = asyncio.ensure_future(  # type: ignore[attr-defined]
-                _drain()
-            )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Loop is already closing → cancellation is the best we can do.
+            return
+        # Module-level registry so run_polybuild() can collect the task and
+        # await it explicitly. RUF006: no fire-and-forget.
+        _SHUTDOWN_DRAIN_TASKS.append(loop.create_task(_drain()))
 
 
 def save_checkpoint(
@@ -200,6 +212,23 @@ async def run_polybuild(
         for registered_sig in _signals_registered:
             with contextlib.suppress(NotImplementedError, RuntimeError):
                 loop.remove_signal_handler(registered_sig)
+
+        # Round 10.2 fix [Kimi RX-001 P0]: drain tasks scheduled by the
+        # shutdown signal handler (cf. ``_handle_shutdown_signal``). Without
+        # this await, asyncio raises "Task was destroyed but it is pending"
+        # warnings AND the cooperative drain effectively becomes
+        # fire-and-forget — so a coroutine guarded by ``asyncio.shield()``
+        # would survive into phase_9 cleanup.
+        drain_tasks = list(_SHUTDOWN_DRAIN_TASKS)
+        _SHUTDOWN_DRAIN_TASKS.clear()
+        if drain_tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*drain_tasks, return_exceptions=True),
+                    timeout=3.0,
+                )
+            except (TimeoutError, asyncio.CancelledError) as exc:
+                logger.warning("shutdown_drain_timeout", error=str(exc))
 
         # Round 5 fix [N]: always-run cleanup, even if Phase -1 blocked, an
         # exception was raised, or we early-returned with _build_aborted_run.

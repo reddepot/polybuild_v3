@@ -349,10 +349,21 @@ async def phase_0_spec(
     canonical = json.dumps(final_dict, sort_keys=True, ensure_ascii=False)
     spec_hash = hashlib.sha256(canonical.encode()).hexdigest()
 
+    # Round 10.2 fix [Kimi adversarial — poisoned spec.task_description]:
+    # Phase 0 receives the user's raw brief via Opus and may interpolate
+    # parts of it into ``task_description``. Without sanitization, an
+    # injection in the brief survives all the way to Phase 2 builders'
+    # ``_build_prompt`` (each adapter concatenates it into the LLM input).
+    # We sanitize once here so every downstream consumer benefits.
+    from polybuild.security.prompt_sanitizer import sanitize_prompt_context
+
+    raw_task = final_dict.get("task_description", brief)
+    cleaned_task = sanitize_prompt_context(str(raw_task))
+
     spec = Spec(
         run_id=run_id,
         profile_id=profile_id,
-        task_description=final_dict.get("task_description", brief),
+        task_description=cleaned_task,
         constraints=final_dict.get("constraints", []),
         acceptance_criteria=[
             AcceptanceCriterion(**ac) for ac in final_dict.get("acceptance_criteria", [])

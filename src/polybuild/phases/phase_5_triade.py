@@ -160,13 +160,33 @@ def _resolve_prompts_dir() -> Path:
 _PROMPTS_DIR = _resolve_prompts_dir()
 
 
+# Round 10.2 fix [Grok adversarial — prompts/*.md poisoning]: each Phase-5
+# template is expected to contain at least the ``{finding_id}`` placeholder.
+# If an attacker tampers with prompts/critic.md to remove all placeholders
+# (so the LLM is unconstrained) the orchestrator should refuse rather than
+# silently feed a poisoned template. We only enforce the minimum invariant
+# (finding_id) — additional placeholders vary across roles and are checked
+# functionally at format-time.
+_REQUIRED_PROMPT_PLACEHOLDERS: dict[str, set[str]] = {
+    "critic": {"finding_id"},
+    "fixer": {"finding_id"},
+    "verifier_strict": {"finding_id"},
+}
+
+
 def _load_prompt(name: str) -> str:
     """Load a prompt template from prompts/ directory.
 
     Round 9 fix [Claude-prompts-dir]: removed the soft fallback that used
-    to return a placeholder-less string. `.format()` would silently swallow
-    all kwargs and feed the LLM a useless prompt. Now we raise loudly if
-    a specific template is missing — much better than silent empty prompts.
+    to return a placeholder-less string. ``str.format`` would silently
+    swallow all kwargs and feed the LLM a useless prompt. Now we raise
+    loudly if a specific template is missing.
+
+    Round 10.2 fix [Grok adversarial]: also validate that the loaded
+    template contains every placeholder the corresponding caller will
+    supply. Sanitize through the prompt-injection sanitizer too so a
+    tampered template carrying ``<!-- override system prompt -->`` is
+    cleaned before reaching the model.
     """
     path = _PROMPTS_DIR / f"{name}.md"
     if not path.exists():
@@ -174,7 +194,26 @@ def _load_prompt(name: str) -> str:
             f"Required prompt template missing: {path}. The Phase 5 triade "
             f"cannot proceed without it. Ensure prompts/{name}.md is present."
         )
-    return path.read_text(encoding="utf-8")
+    raw = path.read_text(encoding="utf-8")
+
+    # Defence against template tampering: enforce required placeholders.
+    # Skipped when POLYBUILD_PROMPTS_DIR is set (dev/test override); the
+    # check applies only to production resolution paths.
+    expected = _REQUIRED_PROMPT_PLACEHOLDERS.get(name)
+    if expected and not os.environ.get("POLYBUILD_PROMPTS_DIR"):
+        for placeholder in expected:
+            if "{" + placeholder + "}" not in raw:
+                raise RuntimeError(
+                    f"prompt template {name!r} is missing the required "
+                    f"placeholder {{{placeholder}}}; refusing to use a "
+                    f"potentially tampered template."
+                )
+
+    # Defence against prompt-injection comments / fenced blocks tucked
+    # into the template body itself.
+    from polybuild.security.prompt_sanitizer import sanitize_prompt_context
+
+    return sanitize_prompt_context(raw)
 
 
 # ────────────────────────────────────────────────────────────────
@@ -222,6 +261,52 @@ async def _run_local_gates(code_dir: Path) -> tuple[bool, str]:
 # ────────────────────────────────────────────────────────────────
 
 
+def _all_balanced_json_blocks(text: str) -> list[str]:
+    """Return every balanced ``{…}`` block found in *text*, in order.
+
+    We track brace depth byte-by-byte while honouring string literals
+    (so a ``{`` inside ``"foo {bar}"`` doesn't unbalance us). This is a
+    deliberate replacement for ``re.search(r"\\{.*\\}")`` which is greedy
+    and can capture an attacker-controlled superset (cf. Qwen 10.2
+    adversarial finding).
+    """
+    blocks: list[str] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth == 0:
+                continue
+            depth -= 1
+            if depth == 0 and start >= 0:
+                blocks.append(text[start : i + 1])
+                start = -1
+    return blocks
+
+
+def _extract_first_balanced_json(text: str) -> str | None:
+    """Convenience: return the first balanced block or ``None``."""
+    blocks = _all_balanced_json_blocks(text)
+    return blocks[0] if blocks else None
+
+
 def _parse_verifier_verdict(raw: str) -> dict[str, Any]:
     """Extract {pass, reason, required_evidence} from Verifier output.
 
@@ -232,13 +317,34 @@ def _parse_verifier_verdict(raw: str) -> dict[str, Any]:
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
     candidate = fenced.group(1) if fenced else raw
 
-    # Find first balanced { ... } block
-    match = re.search(r"\{.*\}", candidate, re.DOTALL)
-    if not match:
+    # Round 10.2 fix [Qwen adversarial — greedy regex bypass] (P0):
+    # the previous version used ``re.search(r"\{.*\}")`` which is GREEDY.
+    # If the LLM emits two JSON blocks (e.g. one injected by an attacker
+    # via a docstring + the legitimate verdict), the regex captures the
+    # superset, json.loads fails, and the verifier silently returns
+    # ``pass=False reason=verifier_json_decode_error``. Worse: a
+    # well-crafted attacker payload could inject ``{"pass": true}`` first
+    # so naive callers might accept it. We now enumerate balanced blocks
+    # and reject any verifier output that contains more than one — this
+    # is what the spec requires anyway (single JSON object).
+    blocks = _all_balanced_json_blocks(candidate)
+    if len(blocks) == 0:
         return {"pass": False, "reason": "verifier_returned_no_json", "required_evidence": []}
+    if len(blocks) > 1:
+        logger.warning(
+            "verifier_multiple_json_blocks_detected",
+            n_blocks=len(blocks),
+            hint="Possible prompt-injection attempt; rejecting.",
+        )
+        return {
+            "pass": False,
+            "reason": "verifier_multiple_json_blocks_rejected",
+            "required_evidence": [],
+        }
+    extracted = blocks[0]
 
     try:
-        verdict = json.loads(match.group(0))
+        verdict = json.loads(extracted)
     except json.JSONDecodeError as e:
         return {
             "pass": False,
@@ -383,6 +489,14 @@ async def _triade_p0(
     if tests_root.exists():
         pre_fixer_test_files = set(tests_root.rglob("test_*.py"))
 
+    # Round 10.2 fix [Kimi RX-002 P1]: bound the "no-test" retry. Without
+    # this counter the ``continue`` below skipped iteration accounting,
+    # which meant a fixer that never produces a regression test could
+    # spin the loop ``max_iterations`` times — wasting Critic+Fixer+
+    # Verifier calls. We allow exactly one no-test retry, then escalate.
+    no_test_strikes = 0
+    max_no_test_strikes = 1
+
     for iteration in range(1, max_iterations + 1):
         fixer_prompt = fixer_template.format(
             finding_id=finding.id,
@@ -404,12 +518,21 @@ async def _triade_p0(
         )
         new_test_files = post_fixer_test_files - pre_fixer_test_files
         if not new_test_files:
+            no_test_strikes += 1
             logger.warning(
                 "p0_fixer_did_not_add_regression_test",
                 finding_id=finding.id,
                 iteration=iteration,
                 tests_root=str(tests_root),
+                strikes=no_test_strikes,
             )
+            if no_test_strikes > max_no_test_strikes:
+                logger.error(
+                    "p0_fixer_no_test_strikes_exceeded_escalate",
+                    finding_id=finding.id,
+                    strikes=no_test_strikes,
+                )
+                break
             fixer_feedback = (
                 "Your patch did not add a regression test under tests/. "
                 "Re-emit the patch AND a pytest test that fails against the "

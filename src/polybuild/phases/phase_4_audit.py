@@ -32,6 +32,10 @@ from polybuild.phases.phase_1_select import select_auditor
 
 logger = structlog.get_logger()
 
+# Round 10.2 fix [Gemini RX-102-02 + Qwen RX-002] caps for the audit prompt.
+_MAX_FILE_BYTES = 256 * 1024
+_MAX_AUDIT_BYTES = 1024 * 1024
+
 
 # ────────────────────────────────────────────────────────────────
 # AUDIT AXES (acquis Round 3)
@@ -59,25 +63,55 @@ async def _invoke_auditor(
     axes: list[str],
     timeout_sec: int = 300,
 ) -> AuditReport:
-    """Send the winner's code to an auditor and parse the structured findings."""
-    # Read the actual code files
-    code_files = {}
+    """Send the winner's code to an auditor and parse the structured findings.
+
+    Round 10.2 fix [Gemini RX-102-02 + Qwen RX-002] (2/3 conv, P1): the
+    audit prompt previously concatenated *every* generated .py without an
+    upper bound. A single large mock-data file (or an attacker that emits
+    a 5 MB payload) was enough to either explode the auditor's context
+    window or drive cost up. We now apply two limits:
+
+      * per-file:   _MAX_FILE_BYTES (256 KiB) — files larger than this are
+                    truncated with a sentinel.
+      * cumulative: _MAX_AUDIT_BYTES (1 MiB) — once reached, remaining
+                    files are listed by name only.
+
+    These caps are deliberately generous for legitimate code (median Python
+    module < 4 KiB) and tight enough to bound worst-case spend.
+    """
+
+    def _read_capped(
+        py_file: Path, current_total: int
+    ) -> tuple[str, int]:
+        try:
+            content = py_file.read_text()
+        except (UnicodeDecodeError, OSError):
+            return "", current_total
+        if len(content.encode("utf-8")) > _MAX_FILE_BYTES:
+            content = (
+                content[: _MAX_FILE_BYTES // 2]
+                + "\n\n# … [TRUNCATED by polybuild auditor cap] …\n"
+            )
+        if current_total + len(content) > _MAX_AUDIT_BYTES:
+            content = (
+                "# … [omitted: audit byte budget exhausted, file listed only] …\n"
+            )
+        return content, current_total + len(content)
+
+    code_files: dict[str, str] = {}
+    total_bytes = 0
     for py_file in winner_result.code_dir.rglob("*.py"):
         if "__pycache__" in py_file.parts:
             continue
-        try:
-            code_files[str(py_file.relative_to(winner_result.code_dir))] = py_file.read_text()
-        except (UnicodeDecodeError, OSError):
-            continue
+        body, total_bytes = _read_capped(py_file, total_bytes)
+        code_files[str(py_file.relative_to(winner_result.code_dir))] = body
 
-    test_files = {}
+    test_files: dict[str, str] = {}
     for py_file in winner_result.tests_dir.rglob("test_*.py"):
         if "__pycache__" in py_file.parts:
             continue
-        try:
-            test_files[str(py_file.relative_to(winner_result.tests_dir))] = py_file.read_text()
-        except (UnicodeDecodeError, OSError):
-            continue
+        body, total_bytes = _read_capped(py_file, total_bytes)
+        test_files[str(py_file.relative_to(winner_result.tests_dir))] = body
 
     axes_section = "\n".join(
         f"  - {ax}: {AUDIT_AXIS_DESCRIPTIONS[ax]}" for ax in axes

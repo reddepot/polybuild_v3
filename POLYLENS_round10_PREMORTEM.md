@@ -121,6 +121,44 @@ Le LLM (Opus, Codex, Gemini) interprète ce commentaire et peut être détourné
 
 ---
 
+## Mise à jour Round 10.2 — patches post-audit Gemini+Grok+Qwen+Kimi
+
+Second cycle d'audit cross-LLM sur le commit Round 10.1. 4 voix orthogonales
+ont signalé 12 findings nouveaux (dont 2 P0 et 7 P1) + revu les 9 patches
+Round 10.1 (8/9 SOLID selon Kimi, R3 INSUFFICIENT). Patches appliqués :
+
+| Patch | Source | Sévérité | Fix |
+|---|---|---|---|
+| **R1 enhanced** | Gemini, Qwen | P0 | Strip markdown link titles + fenced code blocks dans `prompt_sanitizer` |
+| **Cross-device copy** | Qwen RX-003 | P0 | `_copy_cross_device_safe` avec fallback `copyfileobj` sur EXDEV |
+| **Audit context cap** | Gemini RX-102-02 + Qwen RX-002 | P1 | `_MAX_FILE_BYTES=256K` + `_MAX_AUDIT_BYTES=1M` truncation |
+| **Greedy regex JSON** | Qwen adversarial | P0 | `_all_balanced_json_blocks` brace-counting + multi-block reject |
+| **Prompt template guard** | Grok adversarial | P0 | Validate `{finding_id}` placeholder présent + sanitize template content |
+| **R3 drain awaited** | Kimi RX-001 | P0 | `_SHUTDOWN_DRAIN_TASKS` registry + await dans `finally` orchestrator |
+| **Spec.task_description sanitize** | Kimi adversarial | P1 | `sanitize_prompt_context` appliqué dans `phase_0_spec` |
+| **Phase 8 gather safe** | Kimi RX-004 | P1 | `return_exceptions=True` + demote en SmokeQueryResult.error |
+| **ADR start_new_session** | Kimi RX-005 | P1 | + `proc.kill()` explicite sur TimeoutError |
+| **Fixer livelock bounded** | Kimi RX-002 | P1 | `no_test_strikes` counter (max 1) puis escalate |
+
+**Total cumulé Rounds 10 + 10.1 + 10.2 :** 19 patches appliqués, 37 tests
+régression (15 round 10 + 20 round 10.1 + 17 round 10.2). Suite complète :
+**335 passed, 8 xfailed, 0 failed**.
+
+**Findings rejetés round 10.2** :
+- Grok RX-001 (`_load_agents_md_sanitized` dead code) — **HALLUCINATION** :
+  Grok a inventé une fonction qui n'existe pas dans le repo. Mon patch R1
+  utilise `sanitize_prompt_context` directement importé dans
+  `orchestrator/__init__.py:312`.
+- Gemini RX-102-01 (tenacity livelock) — pas de tenacity dans le code.
+- 5 findings MiniMax minoritaires (déjà rejetés round 10.1).
+
+**Backlog Round 10.3** :
+- Kimi RX-003 lazy audit retry non re-vérifié (P1)
+- Kimi RX-006 `_invoke_role` sans timeout explicite (P1, livelock budget)
+- Grok RX-002 `pick_triade` collusion via fallback (P1) — design tradeoff
+- Kimi RX-008 `pick_triade` hardcoded models (P2)
+- R6 résiduel : 8 tests xfail à fixer cas par cas
+
 ## Mise à jour Round 10.1 — Patches appliqués post-audit cross-LLM
 
 Audit externe par 6 voix orthogonales (Grok, Qwen, Gemini, DeepSeek, ChatGPT, Kimi) sur le commit initial poussé. Convergence forte sur 9 findings, tous patchés :
