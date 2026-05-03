@@ -15,7 +15,7 @@
 | bandit Medium+High | ✅ 0 issues | 8 Low (skips justifiés) |
 | pip-audit | ✅ 0 CVE | deps minimum + dev |
 | detect-secrets | ✅ clean | aucun secret commit |
-| pytest | ✅ 365 passed, 9 xfail (R6 résiduel) | coverage ~55% |
+| pytest | ✅ 380 passed, 9 xfail (R6 résiduel) | coverage ~57% |
 | AST sanity | ✅ all 36 files parse | py3.11+ |
 
 Voir [`POLYLENS_round10_PREMORTEM.md`](POLYLENS_round10_PREMORTEM.md) pour les 10 risques résiduels identifiés et la dette technique exposée (R6 = 18 tests xfail volontaires).
@@ -31,6 +31,7 @@ Voir [`POLYLENS_round10_PREMORTEM.md`](POLYLENS_round10_PREMORTEM.md) pour les 1
 | **10.2 audit cross-LLM round 2 (Gemini+Grok+Qwen+Kimi)** | GO conditionnel | 4 P0 + 6 P1 nouveaux ; 8/9 patches 10.1 SOLID | **10/10 patchés** ; 17 tests régression ; 2 findings hallucinés rejetés |
 | **10.2.1 (ChatGPT + Kimi convergent)** | GO conditionnel | adapter `_load_agents_md` bypass R1/R2 (P0 conv 2/4) | **patché** sur 7 adapters ; 14 tests régression ; honeypot adversarial 4/4 ✓ |
 | **10.3 (Gemini+Grok+Qwen+DeepSeek+ChatGPT+Kimi)** | NO_GO → GO conditionnel | 4 P0 sécu Phase 4 (5/5 conv) + 8 P0/P1 archi/sécu | **16 patches** ; 17 tests régression ; 4 honeypots adversariaux ✓ ; 4 hallucinations rejetées |
+| **10.4 + 10.5 (idem 5 voix focus Phase 4/7/5)** | NO_GO Phase 7 + NO_GO Phase 5 | 4 P0 Phase 7 (index dirty, prefix src/, tag collision, ADR rc) + 1 P0 absolu Phase 5 (fixer mutation 3/5 conv) | **15 patches** Phase 7/4 + **1 patch P0 absolu** Phase 5 ; 16 tests régression |
 
 ---
 

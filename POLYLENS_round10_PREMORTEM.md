@@ -121,6 +121,45 @@ Le LLM (Opus, Codex, Gemini) interprète ce commentaire et peut être détourné
 
 ---
 
+## Mise à jour Round 10.4 + 10.5 — Phase 7 hardening + Phase 5 fixer mutation enforcement
+
+Quatrième et cinquième cycles d'audit cross-LLM (Kimi+ChatGPT+Qwen+Grok+Gemini+DeepSeek).
+Focus tournant sur Phase 4 (audit), Phase 7 (commit), Phase 5 (triade).
+
+**P0 absolu trouvé Round 10.5** (3/5 conv : Grok RX-501-01 + DeepSeek 1 + ChatGPT P5-501) :
+le fixer ne mute jamais le worktree validé. La triade était structurellement inerte
+— l'ancien code partait directement vers Phase 6 et Phase 7. Patch : tree hash
+before/after `_invoke_role("fixer", ...)`, escalation si mutation absente +
+capture du `fixer_output` (auparavant ignoré).
+
+**Phase 7 hardening Round 10.4** (5/5 voix focalisé sur ce fichier) :
+- `winner_result=None` → raise (legacy `git add -A` éliminé)
+- Index pré-stagé du dev → raise (anti embed WIP)
+- `tag_pre` collision check (run_id réutilisé sans erreur)
+- `tag_pre` failure → raise (anti rollback impossible)
+- `git add` partial → raise + batch atomique
+- Suppressions stagées via `git rm` (anti fichiers fantômes)
+- Argument injection commit msg (`commit_msg.startswith("-")`)
+- `sha=""` → raise (anti `committed` sans commit)
+- ADR amend rc check (3 sites)
+- `_git` hardened env : GIT_CONFIG_NOSYSTEM, HOME=/dev/null, GIT_SSH_COMMAND=/bin/false
+- `--no-verify` sur commit + amend (anti hook poisoning)
+- `_copy_cross_device_safe` préserve permissions
+- `_list_changed_files` filtre untracked `??`
+- Phase 4 `_resolve_auditor_family` (anti `"unknown"` qui désactivait pick_triade collusion check)
+
+**Suite cumulée** : 365 → **380 passed**, 9 xfailed, 0 failed.
+
+**Backlog round 10.6+** :
+- Critic `FALSE_POSITIVE` substring → JSON verdict structuré (DeepSeek 2 + Kimi P0)
+- Phase 5 budget global wait_for (Kimi P0 + ChatGPT + Qwen)
+- Local gates fail-loud sur tool missing (Kimi P1 + ChatGPT P5-507)
+- Pytest returncode 5 = no tests collected = OK (Kimi P1)
+- `pick_triade` hardcoded list → load from model_dimensions.yaml (Kimi P1)
+- `_parse_verifier_verdict` Pydantic schema strict (Kimi P1)
+- TOCTOU AGENTS.md lock at run start (Kimi RX-301-08)
+- _SHUTDOWN_DRAIN_TASKS per run_id (Kimi RX-301-06)
+
 ## Mise à jour Round 10.3 — patches post-audit Gemini+Grok+Qwen+DeepSeek+ChatGPT+Kimi
 
 Troisième cycle d'audit cross-LLM. 5 voix orthogonales ont passé en revue

@@ -51,6 +51,11 @@ def _copy_cross_device_safe(src: Path, dst: Path) -> None:
     the source and destination live on different volumes (common on
     Synology NAS bind mounts). We try ``copy2`` first to retain mtime
     where possible, then fall back to a portable byte stream.
+
+    Round 10.4 fix [Kimi P1]: when the fallback path runs we lose
+    ``copy2`` metadata, including the executable bit on shell scripts.
+    Re-apply the source mode (permissions only) so a generated script
+    keeps its ``+x`` after the cross-device copy.
     """
     try:
         shutil.copy2(src, dst)
@@ -60,6 +65,8 @@ def _copy_cross_device_safe(src: Path, dst: Path) -> None:
         # Cross-device fallback: portable byte-stream copy, no metadata.
         with src.open("rb") as fsrc, dst.open("wb") as fdst:
             shutil.copyfileobj(fsrc, fdst)
+        with contextlib.suppress(OSError):
+            dst.chmod(src.stat().st_mode & 0o777)
 
 logger = structlog.get_logger()
 
@@ -84,13 +91,38 @@ ADR_TRIGGERS = {
 # ────────────────────────────────────────────────────────────────
 
 
+# Round 10.4 fix [Gemini RX-606-01 + chain]: every git call goes through
+# this hardened wrapper so we never expose the orchestrator to:
+#   * malicious hooks planted under ``.git/hooks/`` (``--no-verify`` on commit)
+#   * a poisoned ``.gitconfig`` in the repo or the user's HOME (
+#     ``GIT_CONFIG_NOSYSTEM=1`` + ``HOME=/dev/null``)
+#   * an interactive prompt blocking the run (``GIT_TERMINAL_PROMPT=0``)
+#   * SSH side-channels triggered by ``[core] sshCommand`` (``GIT_SSH_COMMAND``)
+_GIT_ISOLATED_ENV: dict[str, str] = {
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_TERMINAL_PROMPT": "0",
+    "HOME": "/dev/null",
+    "XDG_CONFIG_HOME": "/dev/null",
+    "GIT_SSH_COMMAND": "/bin/false",
+}
+
+
 async def _git(*args: str, cwd: Path = Path()) -> tuple[int, str, str]:
-    """Run a git command and return (returncode, stdout, stderr)."""
+    """Run a git command in an isolated environment.
+
+    Round 10.4: merges ``_GIT_ISOLATED_ENV`` on top of the caller's env so
+    polybuild's git operations cannot be redirected by an attacker-planted
+    .gitconfig, hooks, or env-borne SSH command.
+    """
+    import os as _os
+
+    env = {**_os.environ, **_GIT_ISOLATED_ENV}
     proc = await asyncio.create_subprocess_exec(
         "git", *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
+        env=env,
     )
     stdout, stderr = await proc.communicate()
     return proc.returncode or 0, stdout.decode(), stderr.decode()
@@ -105,6 +137,11 @@ async def _list_changed_files(cwd: Path = Path()) -> list[Path]:
     for line in stdout.splitlines():
         # format: "XY path/to/file"
         if len(line) >= 4:
+            # Round 10.4 fix [Kimi P1]: ignore untracked files (``?? path``)
+            # so detect_adr_triggers doesn't fire on a developer's stray
+            # ``models.py`` in /tmp.
+            if line[:2].strip() == "??":
+                continue
             files.append(Path(line[3:]))
     return files
 
@@ -223,15 +260,61 @@ async def phase_7_commit(
     """
     logger.info("phase_7_start", run_id=run.run_id)
 
+    # Round 10.4 fix [Kimi P1]: refuse to operate on a non-git directory.
+    rc, _, _ = await _git("rev-parse", "--git-dir", cwd=project_root)
+    if rc != 0:
+        raise RuntimeError(
+            f"phase_7_project_root_not_a_git_repo: {project_root}"
+        )
+
+    # Round 10.4 fix [ChatGPT P7-401 P0 — index pré-stagé du dev]:
+    # ``git commit`` includes the entire index, not just the paths Phase 7
+    # added. If the developer had pre-staged work-in-progress, our commit
+    # would silently bundle it. Refuse to start when the index is dirty
+    # so the developer cannot lose their staged WIP under a polybuild tag.
+    rc, _, _ = await _git("diff", "--cached", "--quiet", cwd=project_root)
+    if rc != 0:
+        raise RuntimeError(
+            "phase_7_index_not_clean: refusing to commit pre-staged "
+            "developer changes. Stash or unstage them before re-running."
+        )
+
+    # Round 10.4 fix [ChatGPT P7-401 + Kimi convergent]: the legacy
+    # ``git add -A`` fallback for missing winner_result is a foot-gun
+    # that re-introduces the round-8 P0 (embedding dev WIP). Refuse.
+    if winner_result is None:
+        raise RuntimeError(
+            "phase_7_commit requires winner_result (round 8 [P7-isolation]). "
+            "The legacy `git add -A` fallback was disabled in round 10.4 "
+            "after ChatGPT + Kimi flagged it as a P0 isolation hole."
+        )
+
     tag_pre = f"polybuild/run-{run.run_id}-pre"
     tag_post = f"polybuild/run-{run.run_id}-commit"
 
     # 1. Pre-commit tag (rollback anchor) — points to current HEAD.
-    # Round 8: `-f` is intentional here so a re-run with the same run_id
-    # re-anchors the rollback target rather than failing silently.
+    # Round 10.4 fix [Kimi P0 + ChatGPT P7-405]: previously a failed pre-tag
+    # was warn-only, but without an anchor Phase 8 cannot roll back. Also
+    # check that the existing tag (if any) does not already point at a
+    # different SHA — that would indicate a run_id collision and silently
+    # losing the previous run's rollback target.
+    rc_existing, existing_sha, _ = await _git(
+        "rev-parse", tag_pre, cwd=project_root
+    )
+    if rc_existing == 0:
+        rc_head, head_sha, _ = await _git(
+            "rev-parse", "HEAD", cwd=project_root
+        )
+        if rc_head == 0 and existing_sha.strip() != head_sha.strip():
+            raise RuntimeError(
+                f"phase_7_pre_tag_collision: {tag_pre} already points at "
+                f"{existing_sha.strip()[:12]} (HEAD={head_sha.strip()[:12]}). "
+                f"Run-id collision suspected — refusing to overwrite."
+            )
+
     rc, _, stderr = await _git("tag", "-f", tag_pre, cwd=project_root)
     if rc != 0:
-        logger.warning("phase_7_pre_tag_failed", stderr=stderr)
+        raise RuntimeError(f"phase_7_pre_tag_failed: {stderr}")
 
     # 2. Round 8 [P7-isolation]: copy + stage ONLY winner artefacts,
     # NOT `git add -A` (which would embed the dev's concurrent edits).
@@ -317,31 +400,57 @@ async def phase_7_commit(
 
         # Stage exactly the paths we copied — no `-A`.
         if staged_paths:
-            for p in staged_paths:
-                rel_to_root = p.relative_to(project_root)
+            # Round 10.4 fix [ChatGPT P7-404 + Qwen P1-02]: a partial
+            # ``git add`` would produce a partial commit silently. Batch
+            # in chunks of 50 paths and raise on any non-zero rc — better
+            # to fail loud than ship half a fix.
+            for chunk_start in range(0, len(staged_paths), 50):
+                chunk = staged_paths[chunk_start : chunk_start + 50]
+                rel_paths = [str(p.relative_to(project_root)) for p in chunk]
                 rc, _, stderr = await _git(
-                    "add", "--", str(rel_to_root), cwd=project_root
+                    "add", "--", *rel_paths, cwd=project_root
                 )
                 if rc != 0:
-                    logger.warning(
-                        "phase_7_add_failed", path=str(rel_to_root), stderr=stderr
+                    raise RuntimeError(
+                        f"phase_7_add_batch_failed: {stderr} "
+                        f"(paths={rel_paths[:5]}...)"
                     )
+
+            # Round 10.4 fix [ChatGPT P7-403 P1 — lost deletions]: if the
+            # winner removed a previously-tracked file, the absence is
+            # invisible to the loop above (only present files are copied).
+            # Stage deletions explicitly: any tracked file under our scope
+            # that no longer exists in the worktree must be ``git rm``'d.
+            scope_prefixes: list[str] = []
+            if prefix_to_restore:
+                scope_prefixes.append(prefix_to_restore + "/")
+            scope_prefixes.append("tests/")
+            tracked_rc, tracked_out, _ = await _git(
+                "ls-files", cwd=project_root
+            )
+            if tracked_rc == 0:
+                tracked_paths = [
+                    Path(line)
+                    for line in tracked_out.splitlines()
+                    if any(line.startswith(p) for p in scope_prefixes)
+                ]
+                staged_rel = {p.relative_to(project_root) for p in staged_paths}
+                deletions = [
+                    p for p in tracked_paths if p not in staged_rel
+                ]
+                if deletions:
+                    for chunk_start in range(0, len(deletions), 50):
+                        chunk_del = deletions[chunk_start : chunk_start + 50]
+                        rc, _, stderr = await _git(
+                            "rm", "--", *(str(p) for p in chunk_del),
+                            cwd=project_root,
+                        )
+                        if rc != 0:
+                            raise RuntimeError(
+                                f"phase_7_rm_batch_failed: {stderr}"
+                            )
         else:
             logger.warning("phase_7_no_winner_files_to_stage")
-    else:
-        # Backward-compat fallback: only used if caller didn't pass winner_result.
-        # Logs a warning because this path embeds dev work-in-progress.
-        logger.warning(
-            "phase_7_isolation_disabled_using_add_minus_A",
-            hint=(
-                "Round 8 [P7-isolation]: pass winner_result to scope the commit "
-                "to LLM-generated artefacts only. `git add -A` may embed the "
-                "developer's concurrent uncommitted work."
-            ),
-        )
-        rc, _, stderr = await _git("add", "-A", cwd=project_root)
-        if rc != 0:
-            raise RuntimeError(f"git add failed: {stderr}")
 
     # 3. List changed files for ADR detection
     changed = await _list_changed_files(project_root)
@@ -360,16 +469,27 @@ Polybuild-run: {run.run_id}
 Polybuild-spec-hash: {run.spec_hash[:12]}
 """
 
-    rc, stdout, stderr = await _git("commit", "-m", commit_msg, cwd=project_root)
+    # Round 10.4 fix [Gemini RX-606-02 P1]: a commit message produced by
+    # an LLM that starts with ``-`` would be parsed as a CLI flag by some
+    # git versions. Pad with a space.
+    if commit_msg.startswith("-"):
+        commit_msg = " " + commit_msg
+
+    # Round 10.4 fix [Gemini RX-606-01 P0]: --no-verify so a malicious
+    # builder cannot plant a ``.git/hooks/pre-commit`` script that runs
+    # arbitrary code as the orchestrator. Git hooks have no place in an
+    # automated polybuild run.
+    rc, stdout, stderr = await _git(
+        "commit", "--no-verify", "-m", commit_msg, cwd=project_root
+    )
     if rc != 0:
         if "nothing to commit" in stderr or "nothing to commit" in stdout:
-            logger.warning("phase_7_no_changes")
-            return CommitInfo(
-                sha="",
-                message=commit_msg,
-                tag_pre=tag_pre,
-                tag_post=tag_post,
-                files_changed=[],
+            # Round 10.4 fix [ChatGPT P7-407]: ``sha=""`` is not a commit.
+            # Refuse to mark a run as committed when no commit happened.
+            raise RuntimeError(
+                "phase_7_no_changes: refusing committed status without "
+                "a real commit SHA. Verify Phase 5 actually patched the "
+                "winner code and that staging produced new content."
             )
         raise RuntimeError(f"git commit failed: {stderr}")
 
@@ -397,13 +517,34 @@ Polybuild-spec-hash: {run.spec_hash[:12]}
                 adr_dir.mkdir(parents=True, exist_ok=True)
                 adr_path = adr_dir / f"{adr_id}-polybuild-run-{run.run_id}.md"
                 adr_path.write_text(adr_text)
-                # Amend commit to include ADR
-                await _git("add", str(adr_path), cwd=project_root)
-                await _git("commit", "--amend", "--no-edit", cwd=project_root)
+                # Round 10.4 fix [ChatGPT P7-406 + Kimi P0 + Qwen P1-03]
+                # (3-conv): each ADR-amend git call must check rc.
+                # A pre-commit hook rejecting the ADR would otherwise leave
+                # ``tag_post`` pointing at the *non*-amended commit, while
+                # ``commit_sha`` (read after the no-op amend) would be the
+                # old SHA — silent divergence between the run record and
+                # the tag.
+                rc, _, stderr = await _git(
+                    "add", "--", str(adr_path), cwd=project_root
+                )
+                if rc != 0:
+                    raise RuntimeError(f"phase_7_adr_add_failed: {stderr}")
+                rc, _, stderr = await _git(
+                    "commit", "--amend", "--no-edit", "--no-verify",
+                    cwd=project_root,
+                )
+                if rc != 0:
+                    raise RuntimeError(f"phase_7_adr_amend_failed: {stderr}")
                 _, sha_out, _ = await _git("rev-parse", "HEAD", cwd=project_root)
                 commit_sha = sha_out.strip()
                 # Re-tag post (move tag to amended commit)
-                await _git("tag", "-f", tag_post, cwd=project_root)
+                rc, _, stderr = await _git(
+                    "tag", "-f", tag_post, cwd=project_root
+                )
+                if rc != 0:
+                    raise RuntimeError(
+                        f"phase_7_adr_post_tag_failed: {stderr}"
+                    )
 
     logger.info(
         "phase_7_done",

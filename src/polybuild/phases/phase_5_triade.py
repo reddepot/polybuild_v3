@@ -18,6 +18,7 @@ Local gates first (PRE-LLM check):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -604,6 +605,34 @@ async def _triade_p0(
     if tests_root.exists():
         pre_fixer_test_files = set(tests_root.rglob("test_*.py"))
 
+    # Round 10.5 fix [Grok RX-501-01 + DeepSeek + ChatGPT P5-501] (3/5 conv,
+    # P0 absolu) — the previous version (1) discarded the fixer's response
+    # entirely (``await _invoke_role(...)`` without assignment, so the
+    # critic's previous-verdict feedback never carried fixer state) and
+    # (2) gave no guarantee that the fixer mutated ``winner.code_dir``.
+    # Some adapter implementations of ``run_raw_prompt`` create their own
+    # synthetic worktree via ``generate()``, leaving the validated path
+    # untouched — Phase 6 then validates the un-fixed code. We now compute
+    # a tree hash before/after the fixer call and refuse to advance the
+    # loop unless we observe a real mutation under ``winner.code_dir.parent``.
+    def _tree_hash(root: Path) -> str:
+        if not root.exists():
+            return ""
+        h = hashlib.sha256()
+        for p in sorted(root.rglob("*")):
+            if not p.is_file() or "__pycache__" in p.parts:
+                continue
+            try:
+                h.update(str(p.relative_to(root)).encode("utf-8"))
+                h.update(b"\0")
+                h.update(p.read_bytes())
+                h.update(b"\0\0")
+            except OSError:
+                continue
+        return h.hexdigest()
+
+    worktree_root = winner.code_dir.parent
+
     # Round 10.2 fix [Kimi RX-002 P1]: bound the "no-test" retry. Without
     # this counter the ``continue`` below skipped iteration accounting,
     # which meant a fixer that never produces a regression test could
@@ -620,11 +649,48 @@ async def _triade_p0(
             previous_verdict=fixer_feedback or "(first attempt)",
             evidence_path=finding.evidence.file if finding.evidence else "n/a",
         )
+        # Round 10.5: snapshot worktree before invoking the fixer so we can
+        # detect adapters that fail to mutate the validated path.
+        pre_fixer_hash = _tree_hash(worktree_root)
         try:
-            await _invoke_role("fixer", fixer, fixer_prompt, winner.code_dir, risk_profile=risk_profile)
+            fixer_output = await _invoke_role(
+                "fixer", fixer, fixer_prompt, winner.code_dir,
+                risk_profile=risk_profile,
+            )
         except Exception as e:
             logger.error("p0_fixer_failed", finding_id=finding.id, error=str(e))
             break
+
+        post_fixer_hash = _tree_hash(worktree_root)
+        if post_fixer_hash == pre_fixer_hash:
+            # Round 10.5 P0 absolu — fixer left the worktree untouched.
+            # We can still consume an iteration via fixer_feedback to give
+            # the next attempt a chance to actually patch the file, but if
+            # a strike is logged so post-mortem can see the no-op.
+            logger.error(
+                "p0_fixer_no_worktree_mutation",
+                finding_id=finding.id,
+                iteration=iteration,
+                hint=(
+                    "Fixer adapter returned text but did not modify "
+                    "winner.code_dir.parent. Check that run_raw_prompt is "
+                    "overridden for the fixer role."
+                ),
+            )
+            fixer_feedback = (
+                "Your previous attempt produced text but DID NOT modify "
+                "any file under the workdir. You MUST edit files in place. "
+                f"Verifier rejected because no mutation was observed. "
+                f"Fixer text was: {(fixer_output or '')[:1500]}"
+            )
+            no_test_strikes += 1
+            if no_test_strikes > max_no_test_strikes:
+                logger.error(
+                    "p0_fixer_no_mutation_strikes_exceeded_escalate",
+                    finding_id=finding.id,
+                )
+                break
+            continue
 
         # Round 10 fix [Phase 5 fixer test enforcement]: enforce that the
         # Fixer created at least one new test file or extended an existing one.

@@ -37,6 +37,34 @@ _MAX_FILE_BYTES = 256 * 1024
 _MAX_AUDIT_BYTES = 1024 * 1024
 
 
+# Round 10.4 fix [Kimi P0 — auditor_family "unknown" for CLI adapters]:
+# the previous fallback ``auditor_voice.split("/")[0] if "/" in voice
+# else "unknown"`` returned ``"unknown"`` for every CLI-routed model
+# (claude-opus-4.7, gpt-5.5, gemini-3.1-pro, kimi-k2.6), disabling the
+# anti-collusion check in pick_triade. The mapping below recovers the
+# real provider family for those voices.
+_VOICE_PREFIX_TO_FAMILY: dict[str, str] = {
+    "claude-": "anthropic",
+    "gpt-": "openai",
+    "gemini-": "google",
+    "kimi-": "moonshot",
+    "qwen": "alibaba",
+    "mistral/": "mistral",
+    "deepseek/": "deepseek",
+    "x-ai/": "xai",
+}
+
+
+def _resolve_auditor_family(voice_id: str) -> str:
+    """Return the provider family for ``voice_id`` ("unknown" only as last resort)."""
+    for prefix, family in _VOICE_PREFIX_TO_FAMILY.items():
+        if voice_id.startswith(prefix):
+            return family
+    if "/" in voice_id:
+        return voice_id.split("/", maxsplit=1)[0]
+    return "unknown"
+
+
 # ────────────────────────────────────────────────────────────────
 # AUDIT AXES (acquis Round 3)
 # ────────────────────────────────────────────────────────────────
@@ -269,7 +297,7 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
         logger.warning("audit_invalid_json", auditor=auditor_voice)
         return AuditReport(
             auditor_model=auditor_voice,
-            auditor_family=auditor_voice.split("/", maxsplit=1)[0] if "/" in auditor_voice else "unknown",
+            auditor_family=_resolve_auditor_family(auditor_voice),
             audit_duration_sec=duration,
             axes_audited=axes,
         )
@@ -298,7 +326,7 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
                     description=f_dict["description"],
                     evidence=evidence,
                     auditor_model=auditor_voice,
-                    auditor_family=auditor_voice.split("/", maxsplit=1)[0] if "/" in auditor_voice else "unknown",
+                    auditor_family=_resolve_auditor_family(auditor_voice),
                 )
             )
         except (KeyError, ValueError) as e:
@@ -318,7 +346,7 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
 
     return AuditReport(
         auditor_model=auditor_voice,
-        auditor_family=auditor_voice.split("/", maxsplit=1)[0] if "/" in auditor_voice else "unknown",
+        auditor_family=_resolve_auditor_family(auditor_voice),
         audit_duration_sec=duration,
         axes_audited=axes,
         findings=findings,
