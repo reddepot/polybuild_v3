@@ -6,7 +6,7 @@ Any change here must be tracked via an ADR.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
@@ -87,7 +87,10 @@ class Spec(BaseModel):
     interfaces: dict[str, Any] = Field(default_factory=dict)  # Pydantic schemas, DB schemas
     risk_profile: RiskProfile
     spec_hash: str = ""  # SHA-256, calculé après Phase 0c
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Round 10.7 fix [POLYLENS v3 Qwen B-02 P2]: the previous default
+    # factory used a deprecated naive UTC API. Use a timezone-aware
+    # ``datetime.now(UTC)`` factory instead.
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class SpecAttack(BaseModel):

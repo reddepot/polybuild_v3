@@ -236,15 +236,17 @@ Hard rules:
         )
 
     def _estimate_metrics(self, worktree: Path) -> SelfMetrics:
+        # Round 10.7 fix [POLYLENS v3 D-02 P1]: read each file once.
         py_files = list((worktree / "src").rglob("*.py"))
         test_files = list((worktree / "tests").rglob("test_*.py"))
-        loc = sum(len(f.read_text().splitlines()) for f in py_files)
+        loc = 0
+        todo_count = 0
+        for f in py_files:
+            text = f.read_text()
+            loc += len(text.splitlines())
+            todo_count += text.count("TODO") + text.count("FIXME")
         test_loc = sum(len(f.read_text().splitlines()) for f in test_files)
         ratio = test_loc / loc if loc > 0 else 0.0
-        todo_count = sum(
-            f.read_text().count("TODO") + f.read_text().count("FIXME")
-            for f in py_files
-        )
         return SelfMetrics(
             loc=loc,
             complexity_cyclomatic_avg=0.0,

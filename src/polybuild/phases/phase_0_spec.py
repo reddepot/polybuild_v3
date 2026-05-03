@@ -218,7 +218,21 @@ If a list is empty, return [].
             },
         )
         response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+        # Round 10.7 fix [POLYLENS v3 Qwen B-04 P1]: same OpenRouter
+        # malformed-response defence as the rest of the codebase.
+        # Direct subscript chain crashes on rate-limit/refusal payloads.
+        payload = response.json()
+        try:
+            content = payload["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            logger.warning(
+                "spec_attack_malformed_or_response",
+                challenger=challenger,
+                error=str(exc),
+            )
+            return SpecAttack(challenger_model=challenger)
+        if not isinstance(content, str):
+            return SpecAttack(challenger_model=challenger)
 
     try:
         data = json.loads(content)
@@ -285,11 +299,20 @@ Output the COMPLETE revised spec as JSON, same schema as before.
     try:
         return json.loads(raw)  # type: ignore[no-any-return]
     except json.JSONDecodeError:
+        # Round 10.7 fix [POLYLENS v3 Qwen B-05 P1]: greedy ``\{.*\}`` over
+        # ``re.DOTALL`` matches across multiple JSON blocks and trailing
+        # text. Switch to non-greedy (``\{.*?\}``) and prefer the LAST
+        # balanced object — Opus revisions tend to put their final answer
+        # last after reasoning prose.
         import re
 
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if match:
-            return json.loads(match.group(0))  # type: ignore[no-any-return]
+        # Find ALL non-greedy candidates, return the largest valid one.
+        candidates = re.findall(r"\{[\s\S]*?\}", raw)
+        for candidate in reversed(candidates):
+            try:
+                return json.loads(candidate)  # type: ignore[no-any-return]
+            except json.JSONDecodeError:
+                continue
         return spec_dict
 
 

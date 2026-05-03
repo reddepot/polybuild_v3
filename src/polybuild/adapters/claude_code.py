@@ -236,9 +236,12 @@ Working directory: {worktree}
         were embedding the raw file content into the LLM prompt, bypassing
         the sanitization the orchestrator applied for the privacy gate.
         We now sanitize at every injection point as defence in depth.
+
+        Round 10.7 fix [POLYLENS v3 GLM A-09 dead docstring]: removed the
+        stray inner triple-quoted expression that ruff flags as dead code.
         """
         from polybuild.security.prompt_sanitizer import sanitize_prompt_context
-        """Load project AGENTS.md or fallback to global."""
+
         local = Path("AGENTS.md")
         if local.exists():
             return sanitize_prompt_context(local.read_text())
@@ -300,16 +303,22 @@ Working directory: {worktree}
         )
 
     def _estimate_metrics(self, worktree: Path) -> SelfMetrics:
-        """Compute metrics from the worktree if not provided by the model."""
+        """Compute metrics from the worktree if not provided by the model.
+
+        Round 10.7 fix [POLYLENS v3 D-02 P1]: previous implementation read
+        each .py file twice (once for loc, once for TODO count). Read each
+        file once into a local variable.
+        """
         py_files = list((worktree / "src").rglob("*.py"))
         test_files = list((worktree / "tests").rglob("test_*.py"))
-        loc = sum(len(f.read_text().splitlines()) for f in py_files)
+        loc = 0
+        todo_count = 0
+        for f in py_files:
+            text = f.read_text()
+            loc += len(text.splitlines())
+            todo_count += text.count("TODO") + text.count("FIXME")
         test_loc = sum(len(f.read_text().splitlines()) for f in test_files)
         ratio = test_loc / loc if loc > 0 else 0.0
-        todo_count = sum(
-            f.read_text().count("TODO") + f.read_text().count("FIXME")
-            for f in py_files
-        )
         return SelfMetrics(
             loc=loc,
             complexity_cyclomatic_avg=0.0,  # TODO: integrate radon
