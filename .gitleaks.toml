@@ -1,0 +1,81 @@
+# .gitleaks.toml — POLYBUILD secrets policy (Round 4 + 5 + 6)
+#
+# Round 5 fixes:
+#   [V] (Audit 3 P1): retiré .polybuild/runs/*.log de l'allowlist. Les logs
+#       sont l'endroit même où un secret leaké via prompt/réponse peut
+#       transiter — les exclure du scan = invisibilité maximale.
+#   [Z] (Audit 5 P2): la règle openai-api-key matchait aussi sk-or-v1- via
+#       le pattern sk-{40,}. Les deux clés ont des préfixes distincts : on
+#       les sépare proprement avec un anchor négatif sur openrouter.
+#
+# Round 6 fix:
+#   [V2] (Audit 4 ChatGPT P2): retiré `.polybuild/secrets.env` de l'allowlist
+#       repo-locale. Le vrai chemin documenté est `~/.polybuild/secrets.env`
+#       (chmod 600, hors repo). Allowlister un fichier intra-repo qui ne
+#       devrait jamais exister masque un commit accidentel — exactement le
+#       cas que gitleaks doit attraper.
+#       NB : le `.gitignore` continue à ignorer `.polybuild/` au cas où.
+
+title = "POLYBUILD secrets policy"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Examples and test fixtures only. Real secrets live in ~/.polybuild/secrets.env (out of repo)."
+paths = [
+    '''^\.env\.example$''',
+    '''^tests/fixtures/.*''',
+]
+
+# ────────────────────────────────────────────────────────────────────
+# CUSTOM RULES (round 5 union — précis, peu de faux positifs)
+# ────────────────────────────────────────────────────────────────────
+
+[[rules]]
+id = "openrouter-key"
+description = "OpenRouter API key (sk-or-v1- prefix)"
+regex = '''sk-or-v1-[A-Za-z0-9_-]{40,}'''
+tags = ["key", "openrouter"]
+
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API key (sk-ant-* prefix)"
+regex = '''sk-ant-(api03|admin01|test01)-[A-Za-z0-9_-]{80,}'''
+tags = ["key", "anthropic"]
+
+[[rules]]
+id = "openai-api-key"
+description = "OpenAI / Codex API key — sk- prefix BUT NOT sk-or-* (OpenRouter) or sk-ant-* (Anthropic)"
+# Round 5 [Z]: negative lookahead on or-/ant- prefixes to avoid double-firing
+regex = '''sk-(?!(?:or-|ant-))(?:proj-)?[A-Za-z0-9_-]{40,}'''
+tags = ["key", "openai"]
+
+[[rules]]
+id = "google-api-key"
+description = "Google AIza key (Gemini)"
+regex = '''AIza[0-9A-Za-z_-]{35}'''
+tags = ["key", "google"]
+
+[[rules]]
+id = "mistral-api-key"
+description = "Mistral API key"
+regex = '''(?i)mistral[_-]?api[_-]?key\s*[:=]\s*["']?[A-Za-z0-9_\-]{30,}'''
+tags = ["key", "mistral"]
+
+[[rules]]
+id = "huggingface-token"
+description = "Hugging Face token"
+regex = '''hf_[A-Za-z0-9]{30,}'''
+tags = ["token", "huggingface"]
+
+[[rules]]
+id = "polybuild-secrets-elsewhere"
+description = "Any KEY=value pattern resembling a token outside the allowed paths"
+regex = '''(?i)(api[_-]?key|secret|token|password|bearer)\s*[:=]\s*["']?[A-Za-z0-9_\-]{32,}'''
+tags = ["generic"]
+[rules.allowlist]
+paths = [
+    '''^\.env\.example$''',
+    '''^tests/fixtures/.*''',
+]

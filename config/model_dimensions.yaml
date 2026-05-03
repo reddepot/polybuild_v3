@@ -1,0 +1,209 @@
+# config/model_dimensions.yaml
+# Matrice de diversité multi-dimensions pour Phase 1 (sélection des voix)
+# 5 dimensions orthogonales : provider, architecture, alignment, corpus_proxy, role_bias
+
+# ────────────────────────────────────────────────────────────────
+# MODÈLES CLI GRATUITS
+# ────────────────────────────────────────────────────────────────
+
+claude-opus-4.7:
+  provider: anthropic
+  architecture: dense
+  alignment: safety_first
+  corpus_proxy: anthropic_corpus
+  role_bias: architect
+
+claude-sonnet-4.6:
+  provider: anthropic
+  architecture: dense
+  alignment: balanced
+  corpus_proxy: anthropic_corpus
+  role_bias: workhorse
+
+claude-haiku-4.5:
+  provider: anthropic
+  architecture: dense
+  alignment: balanced
+  corpus_proxy: anthropic_corpus
+  role_bias: fast_atomic
+
+gpt-5.5:
+  provider: openai
+  architecture: dense
+  alignment: agentic
+  corpus_proxy: openai_corpus
+  role_bias: pragmatic_builder
+
+gpt-5.5-pro:
+  provider: openai
+  architecture: dense
+  alignment: agentic
+  corpus_proxy: openai_corpus
+  role_bias: deep_reasoner
+
+gpt-5.4:
+  provider: openai
+  architecture: dense
+  alignment: agentic
+  corpus_proxy: openai_corpus
+  role_bias: workhorse
+
+gpt-5.3-codex:
+  provider: openai
+  architecture: dense
+  alignment: agentic
+  corpus_proxy: openai_corpus
+  role_bias: cli_specialist
+
+gemini-3.1-pro:
+  provider: google
+  architecture: dense
+  alignment: helpful
+  corpus_proxy: google_corpus
+  role_bias: long_context_integrator
+
+gemini-3.1-flash:
+  provider: google
+  architecture: dense
+  alignment: helpful
+  corpus_proxy: google_corpus
+  role_bias: fast_batch
+
+kimi-k2.6:
+  provider: moonshot
+  architecture: moe
+  alignment: creative
+  corpus_proxy: chinese_corpus
+  role_bias: variant_explorer
+
+# ────────────────────────────────────────────────────────────────
+# OPENROUTER
+# ────────────────────────────────────────────────────────────────
+
+deepseek/deepseek-v4-pro:
+  provider: deepseek
+  architecture: moe
+  alignment: algo_strict
+  corpus_proxy: deepseek_corpus
+  role_bias: math_reasoner
+
+deepseek/deepseek-v4-flash:
+  provider: deepseek
+  architecture: moe
+  alignment: algo_strict
+  corpus_proxy: deepseek_corpus
+  role_bias: fast_cheap
+
+x-ai/grok-4.20:
+  provider: xai
+  architecture: dense
+  alignment: prompt_adherent
+  corpus_proxy: xai_corpus
+  role_bias: skeptic
+
+# ────────────────────────────────────────────────────────────────
+# MISTRAL EU
+# ────────────────────────────────────────────────────────────────
+
+mistral/devstral-2:
+  provider: mistral
+  architecture: dense
+  alignment: agentic
+  corpus_proxy: mistral_corpus
+  role_bias: agentic_eu
+
+# ────────────────────────────────────────────────────────────────
+# LOCAL
+# ────────────────────────────────────────────────────────────────
+
+qwen2.5-coder:14b-int4:
+  provider: alibaba
+  architecture: dense
+  alignment: helpful
+  corpus_proxy: alibaba_corpus
+  role_bias: local_safe
+
+qwen2.5-coder:7b-int4:
+  provider: alibaba
+  architecture: dense
+  alignment: helpful
+  corpus_proxy: alibaba_corpus
+  role_bias: local_atomic
+
+# ────────────────────────────────────────────────────────────────
+# DOCUMENTATION DES DIMENSIONS
+# ────────────────────────────────────────────────────────────────
+
+dimensions_doc:
+  provider:
+    description: "Organisation qui entraîne et opère le modèle"
+    values: [anthropic, openai, google, moonshot, deepseek, xai, mistral, alibaba]
+
+  architecture:
+    description: "Architecture neurale fondamentale"
+    values: [dense, moe]
+    notes: "MoE = Mixture-of-Experts, paramètres actifs partiels"
+
+  alignment:
+    description: "Bias d'alignement / RLHF dominant"
+    values:
+      - safety_first       # refuse beaucoup, prudent
+      - balanced           # compromis utilité/sécurité
+      - agentic            # exécution stricte des tâches
+      - helpful            # assistance maximale
+      - creative           # exploration de variantes
+      - algo_strict        # rigueur mathématique
+      - prompt_adherent    # respect strict des instructions
+
+  corpus_proxy:
+    description: "Provenance majoritaire estimée des données d'entraînement"
+    values:
+      - anthropic_corpus   # propriétaire Anthropic + web filtré
+      - openai_corpus      # propriétaire OpenAI + web
+      - google_corpus      # web Google + propriétaire
+      - chinese_corpus     # données chinoises + occidentales (Moonshot, Alibaba)
+      - deepseek_corpus    # focus algo/math + web
+      - xai_corpus         # web temps réel + données X
+      - mistral_corpus     # corpus européen + multilingue
+      - alibaba_corpus     # corpus chinois + multilingue
+
+  role_bias:
+    description: "Force fonctionnelle dominante observée"
+    values:
+      - architect              # vue système, design haut niveau
+      - workhorse              # généraliste équilibré
+      - pragmatic_builder      # exécution efficace
+      - deep_reasoner          # raisonnement long et profond
+      - cli_specialist         # spécialiste terminal/CLI
+      - long_context_integrator # ingestion massive
+      - fast_batch             # rapidité, batch
+      - fast_atomic            # rapidité tâches atomiques
+      - variant_explorer       # créativité, alternatives
+      - math_reasoner          # rigueur mathématique
+      - skeptic                # critique, low hallucination
+      - agentic_eu             # agentic + souveraineté EU
+      - local_safe             # exécution locale sécurisée
+      - local_atomic           # local rapide
+
+# ────────────────────────────────────────────────────────────────
+# EXEMPLES DE SCORES DE DIVERSITÉ (validation)
+# ────────────────────────────────────────────────────────────────
+
+example_diversity_scores:
+  # Triade convergente (mauvaise) : 3 modèles US dense
+  bad_triad_us_dense:
+    voices: [claude-opus-4.7, gpt-5.5, gemini-3.1-pro]
+    score: 3.33  # provider OK, mais architecture/corpus très proches
+    notes: "Diversité moyenne malgré 3 providers différents (tous US dense web-trained)"
+
+  # Triade orthogonale (bonne) : multi-architecture, multi-corpus
+  good_triad_orthogonal:
+    voices: [claude-opus-4.7, deepseek/deepseek-v4-pro, kimi-k2.6]
+    score: 4.67  # provider, architecture, alignment, corpus, role_bias tous différents
+    notes: "Diversité maximale : Anthropic dense vs DeepSeek MoE vs Moonshot MoE chinois"
+
+  # Triade médicale paranoia HIGH (locale)
+  medical_high_local:
+    voices: [qwen2.5-coder:14b-int4, mistral/devstral-2, qwen2.5-coder:7b-int4]
+    score: 1.67  # diversité faible mais imposée par contraintes RGPD
+    notes: "Conformité prime sur diversité pour profil HIGH"

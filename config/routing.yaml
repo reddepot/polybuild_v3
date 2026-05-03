@@ -1,0 +1,276 @@
+# config/routing.yaml
+# Table de routage v3 — 15 profils avec règles d'orthogonalité
+
+# ────────────────────────────────────────────────────────────────
+# RÈGLES GLOBALES
+# ────────────────────────────────────────────────────────────────
+global_rules:
+  no_two_voices_same_provider: true
+  mediator_distinct_from_phase2: true
+  min_one_long_context_if_repo_files_gt: 100
+  medical_high_excludes_us_cn_models: true
+  irreplaceable_or_models_required:
+    - profiles_using_helia_algo
+    - profiles_using_llm_judge
+    - profiles_using_spec_attack_algo
+
+# ────────────────────────────────────────────────────────────────
+# SEUILS DE DIVERSITÉ PAR PROFIL
+# ────────────────────────────────────────────────────────────────
+diversity_thresholds:
+  refactor_mecanique: 1.5
+  module_standard: 2.0
+  inedit_critique: 2.3
+  helia_algo: 2.5
+  medical_high: 2.0  # priorité sécurité, diversité secondaire
+
+# ────────────────────────────────────────────────────────────────
+# PROFILS DE TÂCHES
+# ────────────────────────────────────────────────────────────────
+
+profiles:
+
+  # ─── 1. Module Python standard sur codebase connue ───
+  module_standard_known:
+    description: "Refactor ou ajout fonctionnel sur codebase établie, conventions stables"
+    voices_phase2:
+      - gpt-5.5             # CLI Codex, builder pragmatique
+      - gemini-3.1-pro      # CLI, ctx 2M
+      - kimi-k2.6           # CLI, variantes créatives
+    mediator: claude-opus-4.7
+    pool_for_diversity:
+      - claude-opus-4.7
+      - claude-sonnet-4.6
+      - gpt-5.5
+      - gemini-3.1-pro
+      - kimi-k2.6
+    audit_axes: [B_quality, C_tests, E_architecture, F_documentation]
+    domain_gates: []
+    requires_probe: false
+    min_diversity: 2.0
+    timeout_phase2_min: 12
+
+  # ─── 2. Module Python sur code propriétaire inédit ───
+  module_inedit_critique:
+    description: "Code propriétaire sans benchmark public, Pro Gap risqué"
+    voices_phase2:
+      - claude-opus-4.7     # CLI, architecture
+      - gpt-5.5             # CLI, builder strict
+      - deepseek/deepseek-v4-pro  # OR, raisonnement transparent
+    mediator: gemini-3.1-pro
+    pool_for_diversity:
+      - claude-opus-4.7
+      - gpt-5.5
+      - gemini-3.1-pro
+      - kimi-k2.6
+      - deepseek/deepseek-v4-pro
+    audit_axes: [A_security, B_quality, C_tests, E_architecture, F_documentation, G_adversarial]
+    domain_gates: [grounding_strict, mutation_testing]
+    requires_probe: true                 # sonde 50 LOC obligatoire
+    min_diversity: 2.3
+    timeout_phase2_min: 15
+
+  # ─── 3. Algo / math pur (HELIA scientifique) ───
+  helia_algo:
+    description: "Algorithmique mathématique, propriété formelles, HELIA"
+    voices_phase2:
+      - gpt-5.5                            # CLI, structured outputs
+      - kimi-k2.6                          # CLI, swarm créatif
+      - deepseek/deepseek-v4-pro           # OR, CoT auditable
+    mediator: claude-opus-4.7
+    pool_for_diversity:
+      - claude-opus-4.7
+      - gpt-5.5
+      - kimi-k2.6
+      - deepseek/deepseek-v4-pro
+      - gemini-3.1-pro
+    audit_axes: [A_security, C_tests, D_perf, G_adversarial]
+    domain_gates: [property_tests_hypothesis, numerical_invariants, seed_reproducibility]
+    requires_probe: true
+    min_diversity: 2.5
+    spec_attacker: deepseek/deepseek-v4-pro
+    timeout_phase2_min: 18
+
+  # ─── 4. Données médicales — paranoia LOW ───
+  medical_low:
+    description: "Données déjà anonymisées ou synthétiques, aucun PII"
+    voices_phase2:
+      - claude-sonnet-4.6   # CLI, post-anonymisation
+      - gemini-3.1-pro      # CLI
+      - gpt-5.5             # CLI
+    mediator: claude-opus-4.7
+    audit_axes: [A_security, B_quality, C_tests, E_architecture]
+    domain_gates: [privacy_gate_check, no_pii_leak]
+    requires_probe: false
+    min_diversity: 2.0
+    timeout_phase2_min: 12
+
+  # ─── 5. Données médicales — paranoia MEDIUM ───
+  medical_medium:
+    description: "Données pseudonymisées, ré-identification théorique possible"
+    voices_phase2:
+      - claude-sonnet-4.6                  # CLI Claude Max (pseudonymisé)
+      - gemini-3.1-pro                     # CLI Gemini Pro (pseudonymisé)
+      - mistral/devstral-2                 # API Mistral EU directe
+    mediator: claude-opus-4.7
+    audit_axes: [A_security, B_quality, C_tests, E_architecture, F_documentation]
+    domain_gates: [privacy_gate_strict, mistral_eu_dpa_validated]
+    requires_probe: false
+    min_diversity: 2.0
+    excludes_openrouter: true
+    timeout_phase2_min: 15
+
+  # ─── 6. Données médicales — paranoia HIGH ───
+  medical_high:
+    description: "Données SPSTI réelles, ré-identifiables → 100% local + EU"
+    voices_phase2:
+      - qwen2.5-coder:14b-int4              # NAS local Ollama
+      - mistral/devstral-2                  # API Mistral EU directe
+      - qwen2.5-coder:7b-int4               # NAS local Ollama
+    mediator: qwen2.5-coder:14b-int4
+    audit_axes: [A_security, B_quality, C_tests, E_architecture, F_documentation, G_adversarial]
+    domain_gates: [privacy_gate_hard_block, no_external_calls, gitleaks_strict]
+    requires_probe: false
+    excludes_openrouter: true
+    excludes_us_cn_models: true
+    requires_user_attestation: true
+    timeout_phase2_min: 30                 # local lent
+
+  # ─── 7. Parsing PDF médical ───
+  parsing_pdf_medical:
+    description: "Extraction PDF médicaux, multimodal, post-anonymisation"
+    voices_phase2:
+      - gemini-3.1-pro                     # CLI, multimodal 2M
+      - gpt-5.5                            # CLI, structured outputs
+      - deepseek/deepseek-v4-pro           # OR, parsing logique zero-copy
+    mediator: claude-opus-4.7
+    audit_axes: [A_security, B_quality, C_tests]
+    domain_gates: [golden_pdfs_test, encoding_validation, extraction_invariants]
+    requires_probe: false
+    min_diversity: 2.2
+    privacy_gate_required: true
+    timeout_phase2_min: 15
+
+  # ─── 8. RAG ingestion / chunking / eval ───
+  rag_ingestion_eval:
+    description: "Pipeline RAG, embeddings, retrieval@k, evaluation"
+    voices_phase2:
+      - gemini-3.1-pro                     # CLI, ctx massif
+      - gpt-5.5                            # CLI, structured
+      - kimi-k2.6                          # CLI, variantes chunking
+    mediator: claude-opus-4.7
+    audit_axes: [A_security, B_quality, C_tests, D_perf]
+    domain_gates: [retrieval_at_k_fixtures, chunk_hash_stability, qdrant_consistency]
+    requires_probe: false
+    min_diversity: 2.0
+    timeout_phase2_min: 15
+
+  # ─── 9. MCP schema / tool change ───
+  mcp_schema_change:
+    description: "Modification d'outils MCP, schémas JSON-RPC, signatures"
+    voices_phase2:
+      - claude-opus-4.7                    # CLI, contrats
+      - gpt-5.5                            # CLI, JSON struct
+      - x-ai/grok-4.20                     # OR, prompt adherence stricte
+    mediator: gemini-3.1-pro
+    audit_axes: [A_security, B_quality, C_tests, E_architecture]
+    domain_gates: [mcp_jsonrpc_smoke, schema_validation_pydantic, serialization_roundtrip]
+    requires_probe: false
+    min_diversity: 2.2
+    timeout_phase2_min: 12
+
+  # ─── 10. OAI-PMH scraping / API REST ───
+  oai_pmh_scraping:
+    description: "Scrapers légaux OAI-PMH, API REST, retry, pagination, robots.txt"
+    voices_phase2:
+      - gpt-5.3-codex                      # CLI Codex, spécialiste
+      - gpt-5.5                            # CLI, logique
+      - kimi-k2.6                          # CLI, edge cases
+    mediator: gemini-3.1-pro
+    audit_axes: [A_security, C_tests, D_perf]
+    domain_gates: [retry_pagination_tests, rate_limit_compliance, xml_namespace_handling]
+    requires_probe: false
+    min_diversity: 2.0
+    timeout_phase2_min: 12
+
+  # ─── 11. DevOps / IaC / scripts shell ───
+  devops_iac_scripts:
+    description: "Terraform, Docker Compose, scripts bash, CI/CD"
+    voices_phase2:
+      - gpt-5.3-codex                      # CLI Codex, spécialiste
+      - claude-sonnet-4.6                  # CLI, review sécu
+      - gemini-3.1-pro                     # CLI, ctx changelogs
+    mediator: claude-opus-4.7
+    audit_axes: [A_security, B_quality, E_architecture]
+    domain_gates: [shellcheck, terraform_validate, kubeval_if_applicable]
+    requires_probe: false
+    min_diversity: 1.8
+    timeout_phase2_min: 10
+
+  # ─── 12. Refactor mécanique <300 LOC ───
+  refactor_mecanique:
+    description: "Refactor sans changement comportement, codebase connue"
+    voices_phase2:
+      - gpt-5.5                            # CLI, exécution rapide
+      - gemini-3.1-pro                     # CLI, blast radius
+    mediator: null                         # gates locaux uniquement
+    audit_axes: [B_quality, C_tests, E_architecture]
+    domain_gates: [behavior_snapshot, diff_minimality]
+    requires_probe: false
+    min_diversity: 1.5
+    timeout_phase2_min: 8
+
+  # ─── 13. LLM-as-Judge / Eval pipeline ───
+  llm_as_judge:
+    description: "Pipeline d'évaluation, scoring, RAG eval, bias detection"
+    voices_phase2:
+      - gemini-3.1-pro                     # CLI, multimodal
+      - claude-sonnet-4.6                  # CLI, nuance
+      - x-ai/grok-4.20                     # OR, faible hallucination
+    mediator: gpt-5.5
+    audit_axes: [B_quality, C_tests, F_documentation]
+    domain_gates: [bias_score_check, inter_annotator_kappa, json_verdict_only]
+    requires_probe: false
+    min_diversity: 2.2
+    timeout_phase2_min: 12
+
+  # ─── 14. Post-finding POLYLENS P0/P1 ───
+  post_polylens_fix:
+    description: "Correction d'un finding P0/P1 d'un audit antérieur"
+    voices_phase2:
+      - gpt-5.5                            # CLI fixer (≠ winner antérieur)
+      - claude-opus-4.7                    # CLI reviewer
+      - dynamique                          # verifier rotatif selon axe
+    mediator: claude-opus-4.7
+    audit_axes: [A_security, C_tests]
+    domain_gates: [regression_tests_mandatory, finding_evidence_required]
+    requires_probe: false
+    min_diversity: 2.0
+    timeout_phase2_min: 12
+
+  # ─── 15. Documentation / ADR ───
+  documentation_adr:
+    description: "Génération de documentation, ADRs, README"
+    voices_phase2:
+      - claude-opus-4.7                    # CLI, rédaction
+      - gemini-3.1-pro                     # CLI, ctx
+      - kimi-k2.6                          # CLI, contradictions
+    mediator: humain                       # validation rapide humaine
+    audit_axes: [F_documentation]
+    domain_gates: [adr_schema_validation, consistency_check]
+    requires_probe: false
+    min_diversity: 1.8
+    timeout_phase2_min: 8
+
+# ────────────────────────────────────────────────────────────────
+# AUDITEURS PAR FAMILLE GAGNANTE (Phase 4)
+# ────────────────────────────────────────────────────────────────
+auditor_pools_by_winner_family:
+  anthropic: [deepseek/deepseek-v4-pro, gemini-3.1-pro, gpt-5.5, x-ai/grok-4.20]
+  openai:    [deepseek/deepseek-v4-pro, claude-opus-4.7, gemini-3.1-pro, x-ai/grok-4.20]
+  google:    [deepseek/deepseek-v4-pro, claude-opus-4.7, gpt-5.5, x-ai/grok-4.20]
+  deepseek:  [claude-opus-4.7, gpt-5.5, gemini-3.1-pro, x-ai/grok-4.20]
+  moonshot:  [claude-opus-4.7, deepseek/deepseek-v4-pro, gpt-5.5, x-ai/grok-4.20]
+  xai:       [claude-opus-4.7, gemini-3.1-pro, deepseek/deepseek-v4-pro, gpt-5.5]
+  mistral:   [claude-opus-4.7, gpt-5.5, gemini-3.1-pro]
+  alibaba:   [claude-opus-4.7, gpt-5.5, gemini-3.1-pro, deepseek/deepseek-v4-pro]

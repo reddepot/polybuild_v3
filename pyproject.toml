@@ -1,0 +1,170 @@
+[project]
+name = "polybuild-core"
+version = "3.0.0-dev"
+description = "Multi-LLM orchestrated code generation pipeline for solo Python dev"
+authors = [{name = "reddie", email = "redtech@protonmail.com"}]
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+    "typer>=0.9",
+    "rich>=13.0",
+    "httpx>=0.25",
+    "structlog>=23.0",
+    "tomli>=2.0; python_version<'3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.1",
+    "ruff>=0.1",
+    "mypy>=1.7",
+    "bandit>=1.7",
+    "pre-commit>=3.5",
+    "hypothesis>=6.92",
+    "mutmut>=2.4",
+    "types-PyYAML>=6.0",
+]
+embeddings = [
+    "sentence-transformers>=2.2",
+    "sqlite-vec>=0.1",
+]
+local = [
+    "ollama>=0.1",
+]
+
+[project.scripts]
+polybuild = "polybuild.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/polybuild"]
+
+# ──────────────────────────────────────────────────
+# RUFF
+# ──────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",      # pycodestyle, pyflakes
+    "I",                # isort
+    "N",                # pep8-naming
+    "UP",               # pyupgrade
+    "B",                # bugbear
+    "S",                # bandit (sécurité)
+    "C4",               # comprehensions
+    "DTZ",              # datetime timezone
+    "T20",              # print statements
+    "RET",              # return
+    "SIM",              # simplify
+    "PTH",              # pathlib
+    "PL",               # pylint
+    "RUF",              # ruff-specific
+]
+ignore = [
+    "S101",  # assert (autorisé en tests)
+    "PLR0913", # too many arguments (cas justifié pour orchestration)
+    "PLC0415", # lazy imports volontaires (briser circular deps + perf)
+    "PLR0911", # too many returns (orchestrator + phase guards)
+    "PLR0912", # too many branches (orchestrator + privacy gate)
+    "PLR0915", # too many statements (orchestrator + phase 5/8 god funcs flagués séparément)
+    "PLR2004", # magic values (seuils de scoring/timeout pédagogiques)
+    "RUF003", # ambiguous unicode in comments (français)
+    "PLW0603", # global statement (registre adapter pattern)
+    "B008", # Path() in default arg (Path immutable, safe)
+    "RET504", # return assigned value (lisibilité tests/regression)
+    "SIM103", # needless bool (lisibilité gardes)
+    "SIM108", # if-else inline (lisibilité)
+    "SIM102", # collapsible if (lisibilité guards profile)
+    "E501", # line too long (prompts LLM dans string literals — couper casse lisibilité)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests can use asserts, magic numbers, lazy imports, hardcoded /tmp paths
+# (pytest tmp_path fixtures), unused imports (test fixtures), and try/except/pass.
+"tests/**/*.py" = [
+    "S101",   # assert
+    "PLR2004", # magic numbers (test data)
+    "PLC0415", # lazy imports inside tests
+    "PLR0915", # too many statements
+    "S108",   # /tmp paths (pytest tmp_path / mocked fixtures)
+    "S110",   # try/except/pass (test silencing)
+    "F401",   # unused import (fixtures, type hints)
+    "F841",   # unused local (mocks)
+    "RUF012", # mutable class default (parametrize lists)
+    "RUF059", # unused unpacked vars
+    "RUF100", # unused noqa
+    "I001",   # import order (auto-fix in pre-commit)
+    "SIM117", # multiple with-statements (mock layering legit in tests)
+    "SIM105", # try/except/pass (mock teardown)
+]
+"src/polybuild/phases/phase_8_prod_smoke.py" = ["PLR0915"]
+"src/polybuild/phases/phase_5_triade.py" = ["PLR0915"]
+
+# ──────────────────────────────────────────────────
+# MYPY STRICT
+# ──────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+warn_no_return = true
+warn_unused_ignores = true
+disallow_any_generics = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_return_any = true
+
+[[tool.mypy.overrides]]
+module = ["sqlite_vec.*", "ollama.*", "edsnlp.*"]
+ignore_missing_imports = true
+
+# ──────────────────────────────────────────────────
+# PYTEST
+# ──────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-q --tb=short --strict-markers"
+markers = [
+    "slow: tests lents (> 5s)",
+    "integration: tests d'intégration CLI",
+    "regression: gold prompt regression tests",
+]
+
+[tool.coverage.run]
+source = ["src/polybuild"]
+omit = ["*/tests/*", "*/__main__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+
+# ──────────────────────────────────────────────────
+# BANDIT
+# ──────────────────────────────────────────────────
+[tool.bandit]
+exclude_dirs = ["tests"]
+# B101: assert in tests (allowed)
+# B105: "pass": False keyed dict mistaken for hardcoded password (false positive)
+# B404: subprocess module import (inherent to phase_8 prod smoke / git ops)
+# B603: subprocess call without shell=True; binaries resolved via shutil.which()
+skips = ["B101", "B105", "B404", "B603"]

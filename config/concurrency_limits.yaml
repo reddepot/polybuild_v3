@@ -1,0 +1,54 @@
+# config/concurrency_limits.yaml
+# Per-provider concurrency caps (Round 4 Faille 3 finalisé).
+#
+# Convergence 6/6 sur le principe des sémaphores asyncio.
+# Désaccord sur les valeurs absolues : médiane des 6 modèles utilisée.
+#
+# Comment ces limites ont été obtenues (mai 2026) :
+#   - claude=2  : Claude Max 20x — quotas hebdomadaires opaques, 2 concurrent sûr
+#                 (DeepSeek=3, Grok=2, Qwen=3, Kimi=2, Gemini=2, ChatGPT=1 → médiane=2)
+#   - codex=2   : ChatGPT Pro — limites 5h non documentées clairement
+#                 (DeepSeek=4, Grok=3, Qwen=3, Kimi=2, Gemini=2, ChatGPT=1 → médiane=2)
+#   - gemini=4  : Google One Pro — 60 req/min (la plus permissive)
+#                 (DeepSeek=8, Grok=2, Qwen=5, Kimi=3, Gemini=4, ChatGPT=1 → médiane=4)
+#   - kimi=1    : Kimi Allegretto — non documenté, 30 concurrence max théorique mais 429 sous plafond
+#                 (DeepSeek=5, Grok=3, Qwen=2, Kimi=2, Gemini=1, ChatGPT=1 → médiane=2 → 1 conservatif)
+#   - openrouter=3 : payant à la requête, limite locale uniquement pour budget
+#   - mistral=2 : api.mistral.ai direct, EU souveraineté, limite généreuse
+#   - ollama=1  : NAS DS224+ J4125, inférence single-thread
+
+limits:
+  claude: 2
+  codex: 2
+  gemini: 4
+  kimi: 1
+  openrouter: 3
+  mistral: 2
+  ollama: 1
+
+# Profils qui boostent certaines limites pour throughput accru
+# (HELIA_algo et code_inedit_critique parallélisent davantage de voix)
+profile_boosts:
+  helia_algo:
+    codex: 2
+    gemini: 2
+    openrouter: 4
+  module_inedit_critique:
+    codex: 2
+    gemini: 2
+    openrouter: 4
+
+# Politique back-pressure (réf. limiter.py — informatif, hard-codé aussi)
+back_pressure:
+  P0:
+    wait_timeout_s: 180
+    fallback: false        # P0 = jamais de fallback (changerait la famille → risque audit/médical)
+  P1:
+    wait_timeout_s: 30
+    fallback: true         # → OpenRouter équivalent si configuré
+  P2:
+    wait_timeout_s: 5
+    fallback: true
+  P3:
+    wait_timeout_s: 0
+    fallback: false        # P3 = drop immédiat

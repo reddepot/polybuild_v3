@@ -1,0 +1,146 @@
+# config/timeouts.yaml
+# Politique de timeouts par phase et global
+
+# ────────────────────────────────────────────────────────────────
+# TIMEOUT GLOBAL PAR RUN
+# ────────────────────────────────────────────────────────────────
+global:
+  default_seconds: 2700              # 45 min (acquis convergent Round 3)
+  helia_critical_seconds: 3600       # 60 min pour profils HELIA
+  quick_refactor_seconds: 1200       # 20 min pour refactor mécanique
+  on_hard_timeout: checkpoint_and_abort_no_partial_commit
+  on_soft_timeout: notify_user_async # à 80% du global
+
+# ────────────────────────────────────────────────────────────────
+# TIMEOUTS PAR PHASE
+# ────────────────────────────────────────────────────────────────
+phases:
+
+  phase_minus_one_privacy:
+    default_seconds: 60
+    max_seconds: 120
+    critical: true
+    on_timeout: abort
+    notes: "Phase courte, échec = abort run"
+
+  phase_0_spec:
+    default_seconds: 480              # 8 min
+    max_seconds: 720
+    critical: true
+    on_timeout: checkpoint_abort
+    notes: "Opus 4.7 génération spec"
+
+  phase_0b_spec_attack:
+    default_seconds: 180              # 3 min
+    max_seconds: 300
+    critical: false
+    on_timeout: continue_with_warning
+    notes: "Si timeout, continue sans Spec Attack (warning)"
+
+  phase_1_routing:
+    default_seconds: 30
+    max_seconds: 120
+    critical: false
+    on_timeout: abort
+    notes: "30s matrice statique, 120s si sonde 50 LOC"
+
+  phase_2_generate:
+    default_seconds: 720              # 12 min (3 voix parallèles)
+    max_seconds: 900                  # 15 min
+    critical: true
+    on_timeout: drop_timed_out_voice
+    notes: "Si une voix timeout, dropée mais run continue avec 2 voix"
+
+  phase_3_score:
+    default_seconds: 60
+    max_seconds: 120
+    critical: false
+    on_timeout: abort
+
+  phase_3b_grounding:
+    default_seconds: 60
+    max_seconds: 120
+    critical: true
+    on_timeout: abort
+    notes: "Grounding AST échoué = abort"
+
+  phase_4_audit:
+    default_seconds: 300              # 5 min
+    max_seconds: 480
+    critical: false
+    on_timeout: skip_with_warning
+    notes: "Si audit timeout, commit avec warning sécurité"
+
+  phase_5_triade:
+    default_seconds: 720              # 12 min total (P0s + P1 batch)
+    max_seconds: 900                  # 15 min
+    critical: true
+    on_timeout: checkpoint_abort
+    sub_timeouts:
+      p0_per_finding_seconds: 480     # 8 min par P0
+      p1_batch_per_axis_seconds: 600  # 10 min par batch P1
+
+  phase_6_validate:
+    default_seconds: 180
+    max_seconds: 300
+    critical: false
+    on_timeout: skip_with_warning
+    sub_timeouts:
+      general_gates_seconds: 60
+      domain_gates_seconds: 120
+
+  phase_7_commit_adr:
+    default_seconds: 120
+    max_seconds: 180
+    critical: false
+    on_timeout: skip_adr_warn
+    notes: "Si ADR auto timeout, commit mais log ADR pending"
+
+  phase_8_prod_smoke:                 # Round 4 à finaliser
+    default_seconds: 300              # 5 min après commit
+    max_seconds: 600
+    critical: true
+    on_timeout: rollback_auto
+    delay_after_commit_seconds: 300   # attendre 5 min après commit
+
+# ────────────────────────────────────────────────────────────────
+# TIMEOUTS PAR MODÈLE / CLI (par invocation)
+# ────────────────────────────────────────────────────────────────
+per_model:
+  claude_code_default: 600            # 10 min
+  claude_code_opus_phase0: 480        # 8 min spec gen
+  codex_cli_default: 600
+  gemini_cli_default: 600
+  kimi_cli_default: 600
+  openrouter_default: 300             # 5 min API
+  mistral_eu_default: 300
+  ollama_local_default: 1800          # 30 min (lent CPU)
+
+# ────────────────────────────────────────────────────────────────
+# COMPORTEMENTS DE CHECKPOINT
+# ────────────────────────────────────────────────────────────────
+checkpoint:
+  directory: ".polybuild/checkpoints"
+  format: json
+  atomic_write: true                  # tmp + rename
+  resumable_phases:
+    - phase_2_generate
+    - phase_4_audit
+    - phase_5_triade
+  non_resumable_phases:
+    - phase_minus_one_privacy
+    - phase_0_spec
+    - phase_3_score
+    - phase_3b_grounding
+  cleanup_after_days: 7
+
+# ────────────────────────────────────────────────────────────────
+# REPRISE D'UN RUN INTERROMPU
+# ────────────────────────────────────────────────────────────────
+resume:
+  command: "polybuild resume --checkpoint <run_id>"
+  pre_resume_checks:
+    - verify_spec_hash_unchanged
+    - verify_git_head_unchanged
+    - verify_workspace_clean
+  on_failure: "abort_resume_and_log"

@@ -1,0 +1,48 @@
+# POLYBUILD .gitignore
+
+# Secrets & local config
+.polybuild/secrets.env
+.polybuild/runs/*.log
+.polybuild/runs/**/checkpoint_*.json
+.polybuild/last_run
+~/.polybuild/secrets.env
+.env
+.env.local
+
+# Worktrees
+.worktrees/
+*.worktree
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Data (project-specific paths, override per project)
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.faiss
+qdrant_storage/
+
+# macOS
+.DS_Store
+**/.DS_Store

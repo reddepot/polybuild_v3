@@ -1,0 +1,91 @@
+name: CI — POLYLENS gates
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: ruff · mypy · bandit · pytest · pip-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project + dev deps
+        run: |
+          uv pip install --system -e ".[dev]"
+
+      - name: ruff (style + sécu lint)
+        run: ruff check src/ tests/
+
+      - name: mypy strict
+        run: mypy --strict src/
+
+      - name: bandit (medium + high only)
+        run: bandit -r src/ -ll
+
+      - name: pip-audit (CVE)
+        run: pip-audit --strict --skip-editable || true
+
+      - name: detect-secrets baseline
+        run: |
+          pip install detect-secrets
+          detect-secrets scan --all-files . > /tmp/secrets.json
+          python -c "
+          import json, sys
+          d = json.load(open('/tmp/secrets.json'))
+          # Only fail if real source files have findings (cache markers excluded)
+          real = {f: v for f, v in d.get('results', {}).items()
+                  if not f.startswith('.mypy_cache') and not f.startswith('.ruff_cache')}
+          if real:
+              print('Secrets in source:', json.dumps(real, indent=2))
+              sys.exit(1)
+          print('detect-secrets: clean')
+          "
+
+      - name: pytest + coverage
+        run: |
+          pytest tests/ -p no:warnings --cov=src/polybuild --cov-report=term --cov-report=xml --cov-fail-under=40
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: coverage.xml
+          retention-days: 14
+
+  ast-check:
+    name: AST sanity (every .py parses)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify all source files parse
+        run: |
+          python -m py_compile $(find src tests -name "*.py")
+          echo "AST: OK"
