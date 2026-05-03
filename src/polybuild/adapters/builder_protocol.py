@@ -132,8 +132,17 @@ class BuilderProtocol(ABC):
         no_write_roles = {"critic", "verifier", "judge", "auditor"}
         no_write = normalized_role in no_write_roles
 
+        # Round 10.7 fix [GLM A-04 P1]: ``hash()`` salts are randomized
+        # per-process (``PYTHONHASHSEED=random`` is the default), so the
+        # same prompt yields different ``run_id`` values across processes
+        # — breaking dedup, caching, and reproducibility. Use a stable
+        # cryptographic digest. ``[:12]`` keeps the suffix short while
+        # still giving 48 bits of entropy.
+        import hashlib
+
+        prompt_digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]
         synthetic_spec = Spec(
-            run_id=f"raw-{normalized_role}-{abs(hash(prompt)) % 10**8}",
+            run_id=f"raw-{normalized_role}-{prompt_digest}",
             profile_id=f"phase5_{normalized_role}",
             task_description=prompt,
             acceptance_criteria=[

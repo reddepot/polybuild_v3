@@ -102,7 +102,31 @@ class OpenRouterAdapter(BuilderProtocol):
                 )
                 response.raise_for_status()
                 data = response.json()
-                content = data["choices"][0]["message"]["content"]
+                # Round 10.7 fix [GLM A-05 + Qwen D-02, 2/5 conv P0]: OpenRouter
+                # can return 200 with a body that omits ``choices`` (rate-limit
+                # response, content-filter refusal, tool-call response with
+                # ``content=None``). The previous direct subscript chain raised
+                # ``KeyError``/``TypeError`` and crashed Phase 2 instead of
+                # returning a graceful FAILED ``BuilderResult``.
+                try:
+                    content = data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError) as e:
+                    duration = time.monotonic() - start
+                    logger.warning(
+                        "openrouter_malformed_response",
+                        slug=self.slug,
+                        error=str(e),
+                        body_preview=str(data)[:200],
+                    )
+                    return self._failed_result(
+                        cfg, worktree, duration, f"Malformed OR response: {e}"
+                    )
+                if content is None:
+                    duration = time.monotonic() - start
+                    logger.warning("openrouter_null_content", slug=self.slug)
+                    return self._failed_result(
+                        cfg, worktree, duration, "OR returned content=null"
+                    )
                 duration = time.monotonic() - start
                 return self._parse_response(content, worktree, cfg, duration)
 
@@ -141,10 +165,19 @@ class OpenRouterAdapter(BuilderProtocol):
                 )
                 response.raise_for_status()
                 data = response.json()
-                content = data["choices"][0]["message"]["content"]
+                # Round 10.7 fix [Codex validation PB-R107-OR-SMOKE-MALFORMED P1]:
+                # apply the same malformed-response guard used in generate().
+                # Previously we caught KeyError but not IndexError or TypeError,
+                # and ``content=None`` reached ``json.loads(None)`` which raises.
+                try:
+                    content = data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError):
+                    return False
+                if not isinstance(content, str):
+                    return False
                 parsed = json.loads(content)
-                return parsed.get("ok") is True
-        except (httpx.HTTPError, json.JSONDecodeError, KeyError):
+                return isinstance(parsed, dict) and parsed.get("ok") is True
+        except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError, TypeError):
             return False
 
     async def is_available(self) -> bool:
@@ -247,9 +280,62 @@ Output ONLY valid JSON matching the schema. No prose.
         except json.JSONDecodeError as e:
             return self._failed_result(cfg, worktree, duration, f"Invalid JSON: {e}")
 
+        # Round 10.7 fix [Codex validation PB-R107-OR-PARSE-SHAPE P1]: a valid
+        # JSON document might be a list, string, or null; without an
+        # ``isinstance(data, dict)`` guard, ``data.get("files", {})`` raises
+        # AttributeError. Same defence already applied at Phase 4 audit.
+        if not isinstance(data, dict):
+            return self._failed_result(
+                cfg, worktree, duration, f"Response JSON not a dict (got {type(data).__name__})"
+            )
+        files = data.get("files", {})
+        if not isinstance(files, dict):
+            logger.warning(
+                "openrouter_files_not_mapping",
+                files_type=type(files).__name__,
+            )
+            files = {}
+        metrics_data = data.get("self_metrics", {})
+        if not isinstance(metrics_data, dict):
+            metrics_data = {}
+
         # Write files to worktree
-        for rel_path, source in data.get("files", {}).items():
-            abs_path = worktree / rel_path
+        # Round 10.7 fix [GLM A-01 P0]: ``rel_path`` is LLM-controlled and
+        # ``Path(worktree) / rel_path`` resolves an absolute right-hand-side
+        # to its absolute value (``worktree / "/etc/cron.d/x"`` →
+        # ``/etc/cron.d/x``); ``..`` segments also escape the worktree.
+        # Combined with prompt-injection vectors elsewhere this would let a
+        # compromised builder write arbitrary host files.
+        # Round 10.7 fix [GLM A-08 P1]: ``write_text`` raises ``TypeError``
+        # if ``source`` is not a string (LLM may emit numbers / nested
+        # objects under the file value). Skip+log non-string entries
+        # rather than crashing the whole adapter response.
+        worktree_resolved = worktree.resolve()
+        for rel_path, source in files.items():
+            if not isinstance(rel_path, str) or not isinstance(source, str):
+                logger.warning(
+                    "openrouter_skip_invalid_file_entry",
+                    rel_path=str(rel_path)[:120],
+                    rel_path_type=type(rel_path).__name__,
+                    source_type=type(source).__name__,
+                )
+                continue
+            try:
+                abs_path = (worktree / rel_path).resolve()
+            except (OSError, ValueError) as e:
+                logger.warning(
+                    "openrouter_path_resolve_failed",
+                    rel_path=rel_path,
+                    error=str(e),
+                )
+                continue
+            if not abs_path.is_relative_to(worktree_resolved):
+                logger.warning(
+                    "openrouter_path_traversal_blocked",
+                    rel_path=rel_path,
+                    abs_path=str(abs_path),
+                )
+                continue
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             abs_path.write_text(source)
 

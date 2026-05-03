@@ -67,18 +67,39 @@ class GroundingEngine:
         with pyproject.open("rb") as f:
             data = tomllib.load(f)
 
+        # Round 10.7 fix [Qwen D-03 P1]: the chained ``split`` chain misparses
+        # PEP 508 specifiers that include environment markers
+        # (``foo; python_version>="3.11"``), URL specifiers
+        # (``foo @ https://...``), or the ``~=`` operator. Use the
+        # ``packaging.requirements.Requirement`` parser which is the
+        # canonical PEP 508 implementation.
+        from packaging.requirements import InvalidRequirement, Requirement
+
+        def _extract_dep_name(spec: str) -> str | None:
+            try:
+                return Requirement(spec).name
+            except InvalidRequirement:
+                # Fallback for malformed specs rather than crashing the
+                # grounding phase. Use a single regex split on the union
+                # of PEP 508 separators rather than chained splits.
+                import re as _re
+
+                head = _re.split(r">=|<=|==|!=|~=|>|<|\[|;|@", spec, maxsplit=1)[0]
+                return head.strip() or None
+
         deps = set()
         for dep in data.get("project", {}).get("dependencies", []):
-            # "pydantic>=2.5" → "pydantic"
-            name = dep.split(">=")[0].split("==")[0].split("<")[0].split("[")[0].strip()
-            deps.add(name.replace("-", "_"))  # PEP 503 normalization
-            deps.add(name)
+            name = _extract_dep_name(dep)
+            if name:
+                deps.add(name.replace("-", "_"))  # PEP 503 normalization
+                deps.add(name)
         # Optional deps
         for group in data.get("project", {}).get("optional-dependencies", {}).values():
             for dep in group:
-                name = dep.split(">=")[0].split("==")[0].split("<")[0].split("[")[0].strip()
-                deps.add(name.replace("-", "_"))
-                deps.add(name)
+                name = _extract_dep_name(dep)
+                if name:
+                    deps.add(name.replace("-", "_"))
+                    deps.add(name)
         return deps
 
     def _index_local_modules(self) -> set[str]:

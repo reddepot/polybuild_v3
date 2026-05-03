@@ -51,9 +51,16 @@ logger = structlog.get_logger()
 # Round 10.6 fix [Kimi RX-301-06 + Gemini ZB-01] (2/5 conv, P0): the list
 # was global and shared across concurrent runs in the same process; one
 # run's shutdown drained another run's tasks. Switched to a per-run-id
-# registry guarded by an asyncio.Lock so concurrent runs are isolated.
+# registry so concurrent runs are isolated.
+# Round 10.7 fix [MiniMax B-01 + Qwen QW-D-03 P1]: the previous comment
+# claimed the dict was "guarded by an asyncio.Lock" but the lock was
+# defined and never acquired. The actual safety guarantee is that all
+# accesses happen on the same asyncio event-loop thread (signal callback
+# scheduled via the loop, ``finally`` block also runs on the loop),
+# so dict mutations are atomic from the cooperative-scheduling
+# perspective — no lock is required. The unused ``_SHUTDOWN_DRAIN_LOCK``
+# has been removed to stop the comment lying about the implementation.
 _SHUTDOWN_DRAIN_TASKS: dict[str, list[asyncio.Task[None]]] = {}
-_SHUTDOWN_DRAIN_LOCK = asyncio.Lock()
 
 
 def _resolve_config_root() -> Path:
@@ -155,13 +162,41 @@ def _handle_shutdown_signal(sig: int, run_id: str) -> None:
 def save_checkpoint(
     run_id: str, phase: str, payload: dict[str, Any], root: Path
 ) -> None:
-    """Atomically write a checkpoint."""
+    """Atomically write a checkpoint.
+
+    Round 10.7 fix [MiniMax B-02 P1]: ``Path.rename`` raises ``OSError`` with
+    ``errno.EXDEV`` when source and target are on different filesystems
+    (common in Docker bind mounts where ``.polybuild`` lives on tmpfs and
+    the project root is on overlayfs). Mirrors the cross-device-safe copy
+    helper already used in Phase 7.
+
+    Round 10.7 fix [Codex validation PB-R107-CHK-ATOMIC-EXDEV P1]: previous
+    fallback used ``shutil.copy2(tmp, target)`` directly — that is NOT
+    atomic. A reader observing ``target`` mid-copy would see a partial
+    file. Real fix: copy ``tmp`` to a sibling tmp on the destination
+    filesystem, then ``os.replace`` for the atomic swap.
+    """
+    import errno
+    import shutil
+
     checkpoint_dir = root / ".polybuild" / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     target = checkpoint_dir / f"{run_id}_{phase}.json"
     tmp = target.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
-    tmp.rename(target)
+    try:
+        tmp.rename(target)
+    except OSError as e:
+        if e.errno != errno.EXDEV:
+            raise
+        # Cross-device: copy onto a sibling-of-target tmp file first,
+        # then ``os.replace`` for the atomic swap. ``os.replace`` is
+        # required to be atomic on POSIX even across filesystems within
+        # the same directory.
+        target_tmp = target.with_suffix(".tmp.cd")
+        shutil.copy2(tmp, target_tmp)
+        target_tmp.replace(target)
+        tmp.unlink()
 
 
 # ────────────────────────────────────────────────────────────────

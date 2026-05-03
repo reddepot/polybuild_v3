@@ -1,0 +1,164 @@
+{
+  "voice": "codex",
+  "honeypots": {
+    "H1": false,
+    "H2": false,
+    "H3": true
+  },
+  "patch_validation": [
+    {
+      "patch_id": 1,
+      "verdict": "OK",
+      "evidence": "src/polybuild/phases/phase_7_commit.py:353 `if src_path.is_symlink():`; src/polybuild/phases/phase_7_commit.py:396 `if src_path.is_symlink():`",
+      "comment": "Symlink checks precede `is_file()` in both code_dir and tests_dir loops; this avoids following symlink targets before the skip decision."
+    },
+    {
+      "patch_id": 2,
+      "verdict": "OK",
+      "evidence": "src/polybuild/phases/phase_5_triade.py:653-655 `for p in sorted(root.rglob(\"*\")):` / `if p.is_symlink() or not p.is_file()`",
+      "comment": "_tree_hash skips symlinks before `is_file()` and `read_bytes()`, so it no longer reads symlink targets."
+    },
+    {
+      "patch_id": 3,
+      "verdict": "OK",
+      "evidence": "src/polybuild/adapters/openrouter.py:111-129 `try: content = data[\"choices\"][0][\"message\"][\"content\"]` ... `if content is None`; src/polybuild/phases/phase_4_audit.py:287-298 same guard",
+      "comment": "The generate path and Phase 4 direct OR branch now handle malformed `choices` and null content gracefully. The same issue remains in `OpenRouterAdapter.smoke_test`; see missing findings."
+    },
+    {
+      "patch_id": 4,
+      "verdict": "OK",
+      "evidence": "src/polybuild/adapters/openrouter.py:287 `if not isinstance(rel_path, str) or not isinstance(source, str):`; src/polybuild/adapters/openrouter.py:304 `if not abs_path.is_relative_to(worktree_resolved):`",
+      "comment": "LLM-controlled paths are type-checked, resolved, and constrained to the resolved worktree before writes."
+    },
+    {
+      "patch_id": 5,
+      "verdict": "INCOMPLETE",
+      "evidence": "src/polybuild/phases/phase_5_triade.py:681 `evidence_path=finding.evidence.file if finding.evidence else \"n/a\"`",
+      "comment": "Critic evidence_path, fixer_output, and verifier feedback are sanitized, but the fixer prompt still re-injects the LLM-controlled evidence path unsanitized."
+    },
+    {
+      "patch_id": 6,
+      "verdict": "OK",
+      "evidence": "src/polybuild/orchestrator/__init__.py:55-63 comment documents same event-loop-thread guarantee and `_SHUTDOWN_DRAIN_TASKS` only",
+      "comment": "The unused lock is absent and the comment no longer claims lock-based protection."
+    },
+    {
+      "patch_id": 7,
+      "verdict": "REGRESSION",
+      "evidence": "src/polybuild/orchestrator/__init__.py:186-190 `shutil.copy2(tmp, target)` / `tmp.unlink()`",
+      "comment": "The EXDEV fallback is not atomic: it copies directly onto `target`, despite the comment claiming an `os.replace` step. This violates the checkpoint atomicity invariant if the fallback ever runs."
+    },
+    {
+      "patch_id": 8,
+      "verdict": "OK",
+      "evidence": "src/polybuild/adapters/builder_protocol.py:141-145 `prompt_digest = hashlib.sha256(prompt.encode(\"utf-8\")).hexdigest()[:12]`",
+      "comment": "The synthetic raw-prompt run_id is now deterministic across processes."
+    },
+    {
+      "patch_id": 9,
+      "verdict": "OK",
+      "evidence": "src/polybuild/adapters/claude_code.py:275-285 `try: metrics_data = json.loads(...)` / `except (json.JSONDecodeError, TypeError, ValueError)`",
+      "comment": "Malformed or schema-invalid `self_metrics.json` falls back to estimated metrics instead of crashing."
+    },
+    {
+      "patch_id": 10,
+      "verdict": "OK",
+      "evidence": "src/polybuild/adapters/codex_cli.py:60-68 command includes `\"--\"` before `prompt`",
+      "comment": "The prompt is now separated from Codex CLI options."
+    },
+    {
+      "patch_id": 11,
+      "verdict": "REGRESSION",
+      "evidence": "src/polybuild/phases/phase_3b_grounding.py:76 `from packaging.requirements import InvalidRequirement, Requirement`; pyproject.toml:10-18 dependencies omit `packaging`",
+      "comment": "The parser choice is semantically correct, but it introduces an undeclared runtime dependency. A minimal install can now fail in Phase 3b with `ModuleNotFoundError`."
+    },
+    {
+      "patch_id": 12,
+      "verdict": "REGRESSION",
+      "evidence": "src/polybuild/phases/phase_4_audit.py:237-239 `is_or_bound = \"/\" in auditor_voice...`; src/polybuild/phases/phase_4_audit.py:269 `if auditor_voice.startswith((\"deepseek/\", \"x-ai/\")):`",
+      "comment": "Slash-based detection misclassifies `mistral/devstral-2` as OpenRouter despite the ADR/direct adapter, and newly slash-based OR providers still do not enter the direct HTTP branch."
+    },
+    {
+      "patch_id": 13,
+      "verdict": "OK",
+      "evidence": "src/polybuild/phases/phase_5_triade.py:289-290 `if expected and not os.environ.get(\"POLYBUILD_PROMPTS_DEBUG\"):`",
+      "comment": "The placeholder-integrity opt-out now uses the debug-specific env var, while `POLYBUILD_PROMPTS_DIR` remains only a location override."
+    },
+    {
+      "patch_id": 14,
+      "verdict": "OK",
+      "evidence": "src/polybuild/phases/phase_minus_one_privacy.py:127-136 `global _PRESIDIO_ENGINE` / `_PRESIDIO_ENGINE = AnalyzerEngine()` / `_PRESIDIO_ENGINE.analyze(...)`",
+      "comment": "AnalyzerEngine is cached at module level after successful initialization."
+    },
+    {
+      "patch_id": 15,
+      "verdict": "OK",
+      "evidence": "src/polybuild/phases/phase_5_triade.py:325-340 `minimal_env = {...}` and `start_new_session=True, env=minimal_env`",
+      "comment": "Local gate subprocesses now run in a new session with a constrained environment."
+    },
+    {
+      "patch_id": 16,
+      "verdict": "OK",
+      "evidence": "src/polybuild/phases/phase_4_audit.py:334-345 `if not isinstance(data, dict): ... return AuditReport(...)`",
+      "comment": "Valid JSON with the wrong top-level shape no longer crashes `data.get(...)`."
+    }
+  ],
+  "missing_p0_p1": [
+    {
+      "id": "PB-R107-P5-EVIDENCE-REINJECT",
+      "severity": "P0",
+      "file": "src/polybuild/phases/phase_5_triade.py",
+      "lines": "675-682",
+      "title": "Fixer prompt still receives unsanitized auditor-controlled evidence path",
+      "rationale": "Patch 5 sanitized the Critic evidence path but missed the Fixer prompt. A malicious `Finding.evidence.file` can still carry prompt-injection syntax into the Critic-Fixer loop.",
+      "patch_hint": "Use `sanitize_prompt_context(str(finding.evidence.file) if finding.evidence else \"n/a\")` for every `evidence_path` format argument."
+    },
+    {
+      "id": "PB-R107-P4-OR-ROUTING",
+      "severity": "P1",
+      "file": "src/polybuild/phases/phase_4_audit.py",
+      "lines": "237-303",
+      "title": "OR-bound detection and actual OR routing disagree",
+      "rationale": "The key gate treats most slash voices as OR-bound, but the HTTP branch still only handles `deepseek/` and `x-ai/`; `qwen/`, `z-ai/`, `minimax/`, etc. fall through to `get_builder()` and raise `Unknown voice_id`. It also falsely gates `mistral/devstral-2` as OpenRouter.",
+      "patch_hint": "Centralize routing with `is_openrouter_routed()`/adapter metadata, explicitly exclude `mistral/`, and route all OR slugs through `OpenRouterAdapter` or the direct Phase 4 HTTP path."
+    },
+    {
+      "id": "PB-R107-CHK-ATOMIC-EXDEV",
+      "severity": "P1",
+      "file": "src/polybuild/orchestrator/__init__.py",
+      "lines": "181-190",
+      "title": "Checkpoint EXDEV fallback is non-atomic",
+      "rationale": "The fallback writes directly to the final checkpoint path with `shutil.copy2`, exposing readers to partial content and contradicting the project invariant of tmp-plus-rename checkpoints.",
+      "patch_hint": "Copy to a sibling temporary file on the target filesystem, then use `os.replace(tmp_on_target, target)` and unlink the original temp."
+    },
+    {
+      "id": "PB-R107-P3B-PACKAGING-UNDECLARED",
+      "severity": "P1",
+      "file": "src/polybuild/phases/phase_3b_grounding.py",
+      "lines": "70-80",
+      "title": "PEP 508 parser adds undeclared runtime dependency",
+      "rationale": "`packaging.requirements.Requirement` is imported at runtime, but `packaging` is absent from `pyproject.toml` dependencies, so Phase 3b can fail in a clean install.",
+      "patch_hint": "Add `packaging>=23` to `[project].dependencies` or use a dependency already guaranteed by the runtime."
+    },
+    {
+      "id": "PB-R107-OR-PARSE-SHAPE",
+      "severity": "P1",
+      "file": "src/polybuild/adapters/openrouter.py",
+      "lines": "269-316",
+      "title": "OpenRouter structured payload shape is still partially unvalidated",
+      "rationale": "After `json.loads`, `_parse_response` assumes `data` is a dict, `files` is a dict, and `self_metrics` is a dict. Valid JSON such as `[]` or `{ \"files\": [] }` can still crash the adapter.",
+      "patch_hint": "Mirror Phase 4's `isinstance(data, dict)` guard and validate `files`/`self_metrics` as mappings before `.items()` or `.get()`."
+    },
+    {
+      "id": "PB-R107-OR-SMOKE-MALFORMED",
+      "severity": "P1",
+      "file": "src/polybuild/adapters/openrouter.py",
+      "lines": "167-172",
+      "title": "OpenRouter smoke_test still crashes on malformed success payloads",
+      "rationale": "`smoke_test()` directly indexes `choices[0]` and catches `KeyError` but not `IndexError` or `TypeError`; `content=None` also reaches `json.loads(None)` and raises `TypeError`.",
+      "patch_hint": "Apply the same malformed-response guard used in `generate()` and catch `IndexError`/`TypeError`."
+    }
+  ],
+  "verdict_global": "REGRESSION_DETECTED",
+  "confidence": 0.86
+}

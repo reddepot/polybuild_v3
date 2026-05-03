@@ -336,8 +336,6 @@ async def phase_7_commit(
         if src_root.name in {"src", "lib"}:
             prefix_to_restore = src_root.name
         for src_path in src_root.rglob("*"):
-            if not src_path.is_file():
-                continue
             # Round 10.3 fix [Kimi RX-304 P0 — symlink data exfiltration]:
             # ``Path.is_file()`` follows symlinks, so a malicious builder
             # that drops a symlink ``src/data -> /etc/passwd`` (or
@@ -345,12 +343,21 @@ async def phase_7_commit(
             # into project_root and committed. Skip symlinks entirely
             # at the staging gate — they have no legitimate purpose in
             # an LLM-generated worktree.
+            #
+            # Round 10.7 fix [Grok E-01 + Kimi C-06, 3/5 conv P0]: reordered
+            # so the ``is_symlink()`` check fires BEFORE ``is_file()``. The
+            # previous order was functionally safe (symlinks-to-files passed
+            # is_file() then got caught by is_symlink()) but the inverted
+            # ordering communicates intent more clearly and removes a
+            # superfluous stat() syscall on the resolved target.
             if src_path.is_symlink():
                 logger.warning(
                     "phase_7_symlink_skipped_in_worktree",
                     path=str(src_path),
-                    target=str(src_path.readlink()) if src_path.is_symlink() else None,
+                    target=str(src_path.readlink()),
                 )
+                continue
+            if not src_path.is_file():
                 continue
             # Skip git internals and caches in the worktree
             rel = src_path.relative_to(src_root)
@@ -380,15 +387,20 @@ async def phase_7_commit(
         ):
             tests_root = winner_result.tests_dir
             for src_path in tests_root.rglob("*"):
-                if not src_path.is_file():
-                    continue
                 # Round 10.3 fix [Kimi RX-304 P0]: same symlink defence
                 # applies on the tests/ side path.
+                # Round 10.7 fix [Grok E-02, 3/5 conv P0]: same reorder
+                # as the code_dir loop above — is_symlink() must fire
+                # before is_file() to make intent unambiguous and to
+                # avoid the resolved-target stat() syscall.
                 if src_path.is_symlink():
                     logger.warning(
                         "phase_7_symlink_skipped_in_tests",
                         path=str(src_path),
+                        target=str(src_path.readlink()),
                     )
+                    continue
+                if not src_path.is_file():
                     continue
                 rel = src_path.relative_to(tests_root)
                 if "__pycache__" in rel.parts or str(rel).endswith(".pyc"):

@@ -119,9 +119,21 @@ def _layer_1_presidio(text: str) -> list[PIIFinding]:
         logger.debug("presidio_unavailable_skipping_l1_nlp")
         return []
 
+    # Round 10.7 fix [Kimi C-09 P1]: ``AnalyzerEngine()`` lazily downloads /
+    # loads spaCy models the first time it runs ``.analyze()``. Re-creating
+    # it on every call multiplied the cold-start cost across runs and
+    # leaked memory under high concurrency. Cache at module level — the
+    # engine is thread-safe for ``.analyze()`` calls.
+    global _PRESIDIO_ENGINE
+    if _PRESIDIO_ENGINE is None:
+        try:
+            _PRESIDIO_ENGINE = AnalyzerEngine()
+        except Exception as e:
+            logger.warning("presidio_init_failed", error=str(e))
+            return []
+
     try:
-        analyzer = AnalyzerEngine()
-        results = analyzer.analyze(
+        results = _PRESIDIO_ENGINE.analyze(
             text=text,
             language="fr",
             entities=["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "DATE_TIME"],
@@ -166,6 +178,9 @@ _QUASI_LABELS_EDS: set[str] = {
 # was a docstring promise never honored, causing OOM risk on the 18GB NAS.
 _EDS_NLP_INSTANCE: Any | None = None
 _EDS_NLP_LOAD_FAILED: bool = False
+
+# Round 10.7 fix [Kimi C-09 P1]: cached Presidio engine — see _layer_1_presidio.
+_PRESIDIO_ENGINE: Any | None = None
 
 
 def _get_eds_nlp() -> Any | None:

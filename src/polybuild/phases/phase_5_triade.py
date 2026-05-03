@@ -43,6 +43,29 @@ from polybuild.models import (
 logger = structlog.get_logger()
 
 
+# Round 10.7 fix [Kimi C-04 P1 + Gemini validation MISSING-05]: allow-list
+# of env vars propagated to local-gate subprocesses (ruff/mypy/pytest).
+# Stripping them caused ``uv``/``pytest``/``mypy`` to fail outright; the
+# allow-list keeps them functional while still isolating the child from
+# arbitrary operator shell config.
+_LOCAL_GATE_ENV_KEYS = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "PYTHONPATH",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "VIRTUAL_ENV",
+    "UV_CACHE_DIR",
+    "UV_INDEX_URL",
+    "UV_PYTHON",
+    "TMPDIR",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+)
+
+
 # ────────────────────────────────────────────────────────────────
 # ROLE ASSIGNMENT (anti self-fix)
 # ────────────────────────────────────────────────────────────────
@@ -279,10 +302,15 @@ def _load_prompt(name: str) -> str:
     raw = path.read_text(encoding="utf-8")
 
     # Defence against template tampering: enforce required placeholders.
-    # Skipped when POLYBUILD_PROMPTS_DIR is set (dev/test override); the
-    # check applies only to production resolution paths.
+    # Round 10.7 fix [Kimi C-07 P1]: previously the check was skipped
+    # whenever ``POLYBUILD_PROMPTS_DIR`` was set — but that env var has
+    # legitimate non-debug uses (CI custom prompt dir, deployments with
+    # bundled prompts at a non-default location). Setting it would
+    # disable the placeholder integrity check entirely. Switch to a
+    # debug-specific opt-out (``POLYBUILD_PROMPTS_DEBUG``) so production
+    # paths always run the check.
     expected = _REQUIRED_PROMPT_PLACEHOLDERS.get(name)
-    if expected and not os.environ.get("POLYBUILD_PROMPTS_DIR"):
+    if expected and not os.environ.get("POLYBUILD_PROMPTS_DEBUG"):
         for placeholder in expected:
             if "{" + placeholder + "}" not in raw:
                 raise RuntimeError(
@@ -311,6 +339,16 @@ async def _run_local_gates(code_dir: Path) -> tuple[bool, str]:
     """
     failures: list[str] = []
 
+    # Round 10.7 fix [Kimi C-04 P1]: align local-gates subprocess hygiene
+    # with the rest of the codebase (start_new_session + minimal env).
+    # Round 10.7 fix [Gemini validation MISSING-05]: allow-list rather
+    # than wholesale-strip — propagate the variables ``uv``, ``pytest``
+    # and ``mypy`` need (defined module-level above).
+    minimal_env = {
+        k: os.environ[k] for k in _LOCAL_GATE_ENV_KEYS if k in os.environ
+    }
+    # ``LANG`` should default to a UTF-8 locale if missing.
+    minimal_env.setdefault("LANG", "C.UTF-8")
     for label, args in [
         ("ruff", ["uv", "run", "ruff", "check", "src/"]),
         ("mypy", ["uv", "run", "mypy", "--strict", "src/"]),
@@ -320,6 +358,8 @@ async def _run_local_gates(code_dir: Path) -> tuple[bool, str]:
             proc = await asyncio.create_subprocess_exec(
                 *args,
                 cwd=code_dir.parent,
+                start_new_session=True,
+                env=minimal_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -549,12 +589,20 @@ async def _triade_p0(
     # Sanitize at the format-time boundary as defence in depth.
     from polybuild.security.prompt_sanitizer import sanitize_prompt_context
 
+    # Round 10.7 fix [Kimi C-01 P0]: ``finding.evidence.file`` is a Path
+    # produced upstream by the auditor model (LLM-controlled). Without
+    # sanitization, an attacker who controls auditor output could embed
+    # Markdown/HTML/zero-width sequences in the path component, which then
+    # lands inside the Critic prompt unchanged. Mirror the sanitization
+    # already applied to ``description`` and ``evidence_excerpt``.
     critic_prompt = critic_template.format(
         finding_id=finding.id,
         severity=finding.severity.value,
         axis=finding.axis,
         description=sanitize_prompt_context(finding.description),
-        evidence_path=finding.evidence.file if finding.evidence else "n/a",
+        evidence_path=sanitize_prompt_context(
+            str(finding.evidence.file) if finding.evidence else "n/a"
+        ),
         evidence_excerpt=sanitize_prompt_context(
             (finding.evidence.snippet or "" if finding.evidence else "")[:2000]
         ),
@@ -616,11 +664,16 @@ async def _triade_p0(
     # a tree hash before/after the fixer call and refuse to advance the
     # loop unless we observe a real mutation under ``winner.code_dir.parent``.
     def _tree_hash(root: Path) -> str:
+        # Round 10.7 fix [Kimi C-06 P1, 1/5 conv]: ``Path.is_file()`` follows
+        # symlinks. A malicious symlink dropped in the worktree (e.g.
+        # ``foo.py -> /etc/passwd``) would otherwise be hashed AND read,
+        # leaking arbitrary host file content into the run-level tree
+        # signature (LFI vector). Skip symlinks before any stat/read.
         if not root.exists():
             return ""
         h = hashlib.sha256()
         for p in sorted(root.rglob("*")):
-            if not p.is_file() or "__pycache__" in p.parts:
+            if p.is_symlink() or not p.is_file() or "__pycache__" in p.parts:
                 continue
             try:
                 h.update(str(p.relative_to(root)).encode("utf-8"))
@@ -643,11 +696,17 @@ async def _triade_p0(
 
     for iteration in range(1, max_iterations + 1):
         # Round 10.3 fix: critic_output is also LLM-controlled; sanitize.
+        # Round 10.7 fix [Codex validation PB-R107-P5-EVIDENCE-REINJECT P0]:
+        # the FIXER prompt also re-injects ``finding.evidence.file`` —
+        # which is auditor-controlled (LLM output). Same sanitization
+        # treatment as the Critic prompt.
         fixer_prompt = fixer_template.format(
             finding_id=finding.id,
             critic_analysis=sanitize_prompt_context(critic_output[:4000]),
             previous_verdict=fixer_feedback or "(first attempt)",
-            evidence_path=finding.evidence.file if finding.evidence else "n/a",
+            evidence_path=sanitize_prompt_context(
+                str(finding.evidence.file) if finding.evidence else "n/a"
+            ),
         )
         # Round 10.5: snapshot worktree before invoking the fixer so we can
         # detect adapters that fail to mutate the validated path.
@@ -677,11 +736,16 @@ async def _triade_p0(
                     "overridden for the fixer role."
                 ),
             )
+            # Round 10.7 fix [Kimi C-02 P0]: ``fixer_output`` is raw LLM text
+            # that gets re-injected into the next loop iteration's prompt.
+            # Without sanitization the Fixer can poison its own future
+            # context (multi-turn prompt-injection chain). Sanitize before
+            # re-use.
             fixer_feedback = (
                 "Your previous attempt produced text but DID NOT modify "
                 "any file under the workdir. You MUST edit files in place. "
                 f"Verifier rejected because no mutation was observed. "
-                f"Fixer text was: {(fixer_output or '')[:1500]}"
+                f"Fixer text was: {sanitize_prompt_context((fixer_output or '')[:1500])}"
             )
             no_test_strikes += 1
             if no_test_strikes > max_no_test_strikes:
@@ -769,9 +833,13 @@ async def _triade_p0(
                 iterations=iteration,
             )
 
+        # Round 10.7 fix [Kimi C-03 P0]: same multi-turn injection vector
+        # — the Verifier's ``reason`` and ``required_evidence`` fields are
+        # LLM-emitted strings re-injected into the Fixer prompt. Sanitize
+        # before passing them downstream.
         fixer_feedback = (
-            f"Verifier rejected: {last_verdict['reason']}. "
-            f"Required evidence: {last_verdict['required_evidence']}"
+            f"Verifier rejected: {sanitize_prompt_context(str(last_verdict['reason']))}. "
+            f"Required evidence: {sanitize_prompt_context(str(last_verdict['required_evidence']))}"
         )
         logger.info(
             "p0_verifier_rejected",

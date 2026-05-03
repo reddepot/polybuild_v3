@@ -32,6 +32,25 @@ from polybuild.phases.phase_1_select import select_auditor
 
 logger = structlog.get_logger()
 
+# Round 10.7 fix [Qwen D-05 P1 + Gemini validation P12 high-risk]: allow-list
+# of OpenRouter provider prefixes used by ``is_or_bound``. Detect by the
+# presence of any of these prefixes — never by "any slash" — so that local
+# model paths (``./models/llama``) and HF cache paths are not misrouted.
+_OR_PROVIDER_PREFIXES = (
+    "anthropic/",
+    "deepseek/",
+    "google/",
+    "meta-llama/",
+    "minimax/",
+    "mistralai/",
+    "moonshotai/",
+    "openai/",
+    "qwen/",
+    "x-ai/",
+    "xiaomi/",
+    "z-ai/",
+)
+
 # Round 10.2 fix [Gemini RX-102-02 + Qwen RX-002] caps for the audit prompt.
 _MAX_FILE_BYTES = 256 * 1024
 _MAX_AUDIT_BYTES = 1024 * 1024
@@ -228,7 +247,9 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
     # auditors and only soft-warn for adapter-routed ones (which can
     # work without OPENROUTER_API_KEY when claude/codex/gemini are
     # configured locally).
-    is_or_bound = auditor_voice.startswith(("deepseek/", "x-ai/"))
+    # Round 10.7 fix [Qwen D-05 P1 + Gemini validation P12 high-risk]:
+    # allow-list of OR provider prefixes (defined module-level above).
+    is_or_bound = auditor_voice.startswith(_OR_PROVIDER_PREFIXES)
     if not api_key and is_or_bound:
         logger.error(
             "audit_no_api_key_for_openrouter_auditor_aborting",
@@ -271,7 +292,23 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
                 },
             )
             response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
+            # Round 10.7 fix [Qwen D-02 + GLM A-05, 2/5 conv P0]: same
+            # malformed-response defence as adapters/openrouter.py — the
+            # audit-time OR call must not crash Phase 4 if ``choices`` is
+            # missing or ``content`` is None (rate-limit/refusal payloads).
+            payload = response.json()
+            try:
+                content = payload["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError) as exc:
+                logger.warning(
+                    "audit_malformed_or_response",
+                    auditor=auditor_voice,
+                    error=str(exc),
+                    body_preview=str(payload)[:200],
+                )
+                content = ""
+            if content is None:
+                content = ""
     else:
         # Family-aware adapter dispatch (round 9 fix).
         from polybuild.adapters import get_builder
@@ -295,6 +332,24 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
         data = json.loads(content)
     except json.JSONDecodeError:
         logger.warning("audit_invalid_json", auditor=auditor_voice)
+        return AuditReport(
+            auditor_model=auditor_voice,
+            auditor_family=_resolve_auditor_family(auditor_voice),
+            audit_duration_sec=duration,
+            axes_audited=axes,
+        )
+
+    # Round 10.7 fix [Qwen D-01 P1]: a valid JSON document might be a list
+    # or a string, not the dict-shaped object the schema expects.
+    # ``data.get(...)`` would raise ``AttributeError`` and crash the run.
+    # Reject non-dict payloads with the same soft-fail path used for
+    # malformed JSON above.
+    if not isinstance(data, dict):
+        logger.warning(
+            "audit_response_not_dict",
+            auditor=auditor_voice,
+            data_type=type(data).__name__,
+        )
         return AuditReport(
             auditor_model=auditor_voice,
             auditor_family=_resolve_auditor_family(auditor_voice),

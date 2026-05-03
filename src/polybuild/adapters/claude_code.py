@@ -266,10 +266,23 @@ Working directory: {worktree}
         except json.JSONDecodeError:
             logger.debug("claude_stdout_not_json", voice=cfg.voice_id)
 
+        # Round 10.7 fix [GLM A-06 P1]: malformed self_metrics.json (e.g.
+        # builder writes invalid JSON, or types that Pydantic rejects)
+        # would otherwise crash the entire ``generate()`` call. Fall back
+        # to ``_estimate_metrics`` when parse/validation fails.
         metrics_path = worktree / "self_metrics.json"
+        metrics: SelfMetrics
         if metrics_path.exists():
-            metrics_data = json.loads(metrics_path.read_text())
-            metrics = SelfMetrics(**metrics_data)
+            try:
+                metrics_data = json.loads(metrics_path.read_text())
+                metrics = SelfMetrics(**metrics_data)
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                logger.warning(
+                    "claude_metrics_parse_fallback",
+                    voice=cfg.voice_id,
+                    error=str(e),
+                )
+                metrics = self._estimate_metrics(worktree)
         else:
             # Estimate metrics from worktree
             metrics = self._estimate_metrics(worktree)

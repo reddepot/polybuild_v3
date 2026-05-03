@@ -15,6 +15,10 @@ dependencies = [
     "httpx>=0.25",
     "structlog>=23.0",
     "tomli>=2.0; python_version<'3.11'",
+    # Round 10.7 fix [Codex validation PB-R107-P3B-PACKAGING-UNDECLARED P1]:
+    # phase_3b_grounding now uses packaging.requirements.Requirement for
+    # PEP 508 parsing — must be a declared runtime dependency.
+    "packaging>=23.0",
 ]
 
 [project.optional-dependencies]

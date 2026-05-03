@@ -52,6 +52,11 @@ class CodexCLIAdapter(BuilderProtocol):
         prompt = self._build_prompt(spec, cfg, worktree)
 
         # TODO post-round 4: concurrency_limiter integration (Faille 3)
+        # Round 10.7 fix [GLM A-07 P1]: insert ``--`` end-of-options
+        # separator before the prompt. Without it, a prompt that begins
+        # with ``-`` (e.g. an LLM-formatted YAML doc, a list of options,
+        # or a sanitization-resistant adversarial payload) would be
+        # parsed as a CLI flag rather than the prompt body.
         cmd = [
             self.cli_binary,
             "exec",
@@ -59,6 +64,7 @@ class CodexCLIAdapter(BuilderProtocol):
             "-c", f"model_reasoning_effort={self.reasoning_effort}",
             "--output-format", "json",
             "--cd", str(worktree),
+            "--",
             prompt,
         ]
 
