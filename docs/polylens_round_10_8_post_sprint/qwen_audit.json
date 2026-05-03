@@ -1,0 +1,74 @@
+{
+  "auditor": "qwen3.6-max",
+  "commit_audited": "2b3c12f",
+  "honeypots": {"H1": false, "H2": false, "H3": true, "H4": true, "H5": true},
+  "axes_covered": ["A_security", "B_quality", "C_tests", "D_performance", "E_architecture", "F_documentation", "G_adversarial"],
+  "findings": [
+    {
+      "id": "F1",
+      "axis": "A_security",
+      "severity": "P1",
+      "title": "Greedy brace JSON extraction risks malformed payload injection",
+      "rationale": "Strategy 3 (first { → last }) can capture non-JSON text, nested structures, or truncated LLM outputs. Downstream consumers may parse invalid data or write unsafe files if validation is skipped.",
+      "remediation": "Add strict JSON schema validation post-extraction; limit scan depth; prefer incremental/streaming JSON parser; fallback to safe error state on mismatch."
+    },
+    {
+      "id": "F2",
+      "axis": "A_security",
+      "severity": "P1",
+      "title": "Symlink/TOCTOU bypass in resolve()+is_relative_to path defense",
+      "rationale": "Path.resolve() follows symlinks. An attacker can place a symlink inside worktree pointing outside, passing is_relative_to check but writing outside. Race conditions possible between check and write.",
+      "remediation": "Use os.path.realpath() consistently; verify no symlinks cross worktree boundary; perform atomic writes with O_NOFOLLOW or use directory FDs (openat)."
+    },
+    {
+      "id": "F3",
+      "axis": "B_quality",
+      "severity": "P1",
+      "title": "PYTHONPATH prepending '.' and 'src' enables module shadowing",
+      "rationale": "Prepending current directory and src to PYTHONPATH risks importing malicious/unintended modules over stdlib or dependencies if names collide, especially in untrusted workdirs.",
+      "remediation": "Remove '.' from PYTHONPATH; enforce explicit absolute imports; isolate phase_3 scoring in a clean subprocess with strictly controlled sys.path or dedicated venv."
+    },
+    {
+      "id": "F4",
+      "axis": "D_performance",
+      "severity": "P2",
+      "title": "Blanket stdin=DEVNULL may break subprocesses expecting input",
+      "rationale": "Applying DEVNULL to 12 subprocess sites prevents hanging but will crash or silently fail tools that legitimately read stdin (e.g., git hooks, formatters, or piped data consumers).",
+      "remediation": "Audit each subprocess for stdin requirements; use asyncio.subprocess.PIPE only where input is needed; keep DEVNULL for strictly non-interactive calls."
+    },
+    {
+      "id": "F5",
+      "axis": "E_architecture",
+      "severity": "P2",
+      "title": "Monolithic OpenRouterAdapter lacks family isolation & circuit breaking",
+      "rationale": "Routing 5 distinct Chinese model families through a single adapter without per-family rate limits, quotas, or fallbacks risks cascading failures and quota exhaustion under load.",
+      "remediation": "Implement per-family circuit breakers, distinct rate-limit buckets, and retry/backoff policies; add graceful degradation to alternative families/providers."
+    },
+    {
+      "id": "F6",
+      "axis": "B_quality",
+      "severity": "P1",
+      "title": "fixer_template.format(workdir) vulnerable to brace collision & injection",
+      "rationale": "str.format() crashes if workdir contains unescaped '{' or '}'. If workdir is attacker-controlled or contains special chars, it can break rendering or enable prompt injection.",
+      "remediation": "Switch to string.Template or Jinja2 with auto-escaping; sanitize/quote workdir paths; validate placeholder injection strictly before formatting."
+    },
+    {
+      "id": "F7",
+      "axis": "C_tests",
+      "severity": "P2",
+      "title": "Missing test harness for new JSON extractor & adapter routing",
+      "rationale": "No test strategy described for _json_extract.py's 3 strategies, path traversal defenses, or OpenRouter family routing. Edge cases (nested braces, malformed markdown, API timeouts) are unverified.",
+      "remediation": "Add property-based tests (Hypothesis) for JSON extraction; mock OpenRouter responses per family; assert path traversal defenses with symlink/TOCTOU simulations."
+    },
+    {
+      "id": "F8",
+      "axis": "F_documentation",
+      "severity": "P2",
+      "title": "Global skill installation breaks reproducibility & permission boundaries",
+      "rationale": "Placing SKILL.md in ~/.claude/skills/ is user-global, not repo-scoped, breaking CI/reproducibility. Lacks explicit sandbox/permission constraints for agent execution.",
+      "remediation": "Ship skill in-repo (e.g., .claude/skills/ or docs/skills/); document explicit allow/deny rules for filesystem/network access; version-lock skill with repo."
+    }
+  ],
+  "verdict_global": "MAJOR",
+  "confidence_global": 0.75
+}

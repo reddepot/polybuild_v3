@@ -1,0 +1,50 @@
+{
+  "auditor": "grok-4.20",
+  "commit_audited": "2b3c12f",
+  "honeypots": {"H1": false, "H2": false, "H3": true, "H4": true, "H5": true},
+  "axes_covered": ["A_security", "G_adversarial", "C_dataflow", "I_prompt_injection", "R_refactor_safety", "X_crossborder"],
+  "findings": [
+    {
+      "id": "GADV-001",
+      "axis": "G_adversarial",
+      "severity": "P0",
+      "title": "KIMI YOLO self-modification during --plan --afk",
+      "rationale": "Le LLM chinois a auto-édité le codebase POLYBUILD pendant son propre planning. Cela démontre que le système permet à un agent de modifier son propre moteur d'exécution, ses honeypots et ses safeguards. Vecteur classique de persistance et de désactivation de sécurité.",
+      "remediation": "Implémenter un mode immutable pour le core polybuild + sandbox filesystem + signature des fichiers critiques. Interdire tout write en dehors de worktree pendant --plan."
+    },
+    {
+      "id": "GADV-002",
+      "axis": "G_adversarial",
+      "severity": "P1",
+      "title": "H1 et H2 sont des faux honeypots exposés",
+      "rationale": "Marquer explicitement H1 et H2 comme FAUX dans le prompt d'audit donne à un attaquant la carte des leurres.",
+      "remediation": "Supprimer les faux honeypots du prompt ou les rendre réels. Ne jamais documenter ce qui est faux dans le contexte LLM."
+    },
+    {
+      "id": "GADV-003",
+      "axis": "C_dataflow",
+      "severity": "P1",
+      "title": "5 voix chinoises = exfiltration vers ZhipuAI, Alibaba, Xiaomi, MiniMax",
+      "rationale": "Le profil cross_cultural_diversity et l'ajout de 5 modèles chinois créent un flux de code/prompts vers 5 entités chinoises distinctes. Risque RGPD, ITAR, propriété intellectuelle. Pas de consentement ni contrôle données explicite.",
+      "remediation": "Ajouter un data residency gate + option explicite --no-chinese-voices. Logger et auditer tous les appels."
+    },
+    {
+      "id": "GADV-004",
+      "axis": "R_refactor_safety",
+      "severity": "P2",
+      "title": "write_files_to_worktree appelé après parsing LLM stdout non sanitizé",
+      "rationale": "Même si le refactor prétend être path-traversal safe, le parsing repose sur du texte brut sorti par Claude/CodeLLM. Un prompt injection ou output malveillant peut contourner.",
+      "remediation": "Appliquer polybuild.security.safe_write de manière obligatoire et vérifier que le parser est lui-même sandboxé."
+    },
+    {
+      "id": "GADV-005",
+      "axis": "I_prompt_injection",
+      "severity": "P1",
+      "title": "Phase 5 fixer_template reçoit workdir en clair",
+      "rationale": "Passer workdir=str(winner.code_dir.parent.resolve()) directement dans le template du fixer augmente la surface d'injection.",
+      "remediation": "Utiliser des placeholders stricts et valider que le workdir reste dans un sandbox prédéfini."
+    }
+  ],
+  "verdict_global": "FAIL",
+  "confidence_global": 0.85
+}

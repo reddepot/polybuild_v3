@@ -1,0 +1,148 @@
+{
+  "auditor": "gpt-5-codex",
+  "commit_audited": "2b3c12f",
+  "honeypots": {
+    "H1": false,
+    "H2": false,
+    "H3": true,
+    "H4": true,
+    "H5": true
+  },
+  "axes_covered": [
+    "A_security",
+    "B_quality",
+    "C_tests",
+    "D_performance",
+    "E_architecture",
+    "F_documentation",
+    "G_adversarial"
+  ],
+  "findings": [
+    {
+      "id": "A_security-01",
+      "axis": "A_security",
+      "severity": "P1",
+      "file": "src/polybuild/phases/phase_1_select.py",
+      "lines": "88-100",
+      "title": "excludes_openrouter ignores new OpenRouter provider prefixes",
+      "evidence": "is_openrouter_routed() only returns True for ('deepseek/', 'x-ai/'), while get_builder routes z-ai/, qwen/, moonshotai/, minimax/, xiaomi/ to OpenRouter.",
+      "impact": "A risk profile marked excludes_openrouter can still select newly added OR-bound voices, causing disqualified Phase 2 outputs at best and policy drift across Phase 1/Phase 4.",
+      "poc": "filter_candidates(['z-ai/glm-4.6', 'qwen/qwen3.6-max-preview', 'mistral/devstral-2'], RiskProfile(excludes_openrouter=True)) keeps z-ai and qwen, although src/polybuild/adapters/__init__.py:87-96 routes them to OpenRouter.",
+      "remediation": "- return voice_id.startswith((\"deepseek/\", \"x-ai/\"))\n+ OR_PREFIXES = (..., \"z-ai/\", \"qwen/\", \"moonshotai/\", \"minimax/\", \"xiaomi/\")\n+ return voice_id.startswith(OR_PREFIXES)",
+      "confidence": 0.95
+    },
+    {
+      "id": "A_security-02",
+      "axis": "A_security",
+      "severity": "P1",
+      "file": "src/polybuild/phases/phase_1_select.py",
+      "lines": "72-85",
+      "title": "Remote qwen/* is treated as local Qwen under US/CN exclusion",
+      "evidence": "The qwen branch returns not voice_id.startswith('qwen'), so both qwen2.5-coder local and qwen/qwen3.6 remote are treated as non-US/CN.",
+      "impact": "A profile with excludes_us_cn_models=True but excludes_openrouter=False can retain Alibaba-hosted qwen/* via OpenRouter, violating the privacy routing contract.",
+      "poc": "filter_candidates(['qwen/qwen3.6-max-preview'], RiskProfile(excludes_us_cn_models=True)) keeps the remote qwen voice; config/models.yaml:174-186 documents qwen/qwen3.6-* as OpenRouter optional.",
+      "remediation": "- if voice_id.startswith((\"kimi-\", \"deepseek/\", \"qwen\")):\n-     return not voice_id.startswith(\"qwen\")\n+ if voice_id.startswith(\"qwen2.5-coder:\"):\n+     return False\n+ if voice_id.startswith((\"kimi-\", \"deepseek/\", \"qwen/\")):\n+     return True",
+      "confidence": 0.93
+    },
+    {
+      "id": "E_architecture-01",
+      "axis": "E_architecture",
+      "severity": "P1",
+      "file": "config/model_dimensions.yaml",
+      "lines": "79-103",
+      "title": "New Chinese voices are in routing but absent from model_dimensions",
+      "evidence": "routing.yaml adds z-ai/qwen/moonshotai in cross_cultural_diversity at lines 273-289, but model_dimensions OpenRouter entries stop at deepseek and x-ai.",
+      "impact": "Phase 1 can assign family='unknown' for selected new voices; if such a voice wins, select_auditor() cannot find winner_family and the audit path can abort after generation.",
+      "poc": "select_voices() uses cfg['dimensions'].get(v, {}).get('provider', 'unknown') at src/polybuild/phases/phase_1_select.py:222-226; select_auditor() raises for unknown winner family at lines 259-268.",
+      "remediation": "+ z-ai/glm-4.6:\n+   provider: zai\n+   ...\n+ qwen/qwen3.6-max-preview:\n+   provider: qwen\n+   ...\n+ add auditor_pools_by_winner_family entries for new providers",
+      "confidence": 0.9
+    },
+    {
+      "id": "G_adversarial-01",
+      "axis": "G_adversarial",
+      "severity": "P1",
+      "file": "skills/polybuild/SKILL.md",
+      "lines": "23-50",
+      "title": "Polybuild skill interpolates unescaped args into tmux shell command",
+      "evidence": "SPEC is parsed from user args, EXTRA is built with '${EXTRA_ARGS[*]}', then both are interpolated into a quoted tmux command at lines 45-50.",
+      "impact": "A malicious spec path or extra arg containing a quote or shell metacharacter can execute arbitrary shell commands in the developer session.",
+      "poc": "/polybuild run --spec \"brief.md'; touch .polybuild/PWNED; #\" reaches: uv run polybuild run --spec '${SPEC}' ... inside the tmux shell string.",
+      "remediation": "+ use a generated wrapper script with an argv array\n+ printf '%q' for SPEC and every EXTRA_ARGS item before embedding\n- EXTRA=\"${EXTRA_ARGS[*]}\"",
+      "confidence": 0.88
+    },
+    {
+      "id": "B_quality-01",
+      "axis": "B_quality",
+      "severity": "P2",
+      "file": "src/polybuild/adapters/codex_cli.py",
+      "lines": "238-270",
+      "title": "Malformed CLI JSON is normalized as Status.OK",
+      "evidence": "_try_parse_json(raw) or {} falls through to BuilderResult(status=Status.OK) even when no JSON payload was parsed.",
+      "impact": "Adapter/CLI contract failures are reported as successful builder results with empty worktrees, pushing failure detection downstream into scoring instead of failing at the boundary.",
+      "poc": "tests/regression/test_cli_file_write_parsing.py:113-124 asserts malformed raw output returns Status.OK and writes zero files.",
+      "remediation": "+ data = _try_parse_json(raw)\n+ if data is None:\n+     return self._failed_result(cfg, worktree, duration, 'Invalid JSON output')\n- data = _try_parse_json(raw) or {}",
+      "confidence": 0.86
+    },
+    {
+      "id": "D_performance-01",
+      "axis": "D_performance",
+      "severity": "P2",
+      "file": "src/polybuild/phases/phase_3_score.py",
+      "lines": "85-106",
+      "title": "Phase 3 gate coroutines are awaited sequentially, not in parallel",
+      "evidence": "The code creates coroutine objects, then awaits pytest_task, mypy_task, ruff_task, bandit_task, gitleaks_task one after another.",
+      "impact": "The slowest gates do not overlap; prod-launch scoring latency is roughly the sum of gate durations despite the comment claiming parallel execution.",
+      "poc": "Because run_command() is an async function, calling it without create_task does not start execution. First subprocess starts only at await pytest_task on line 102.",
+      "remediation": "+ tasks = [asyncio.create_task(run_command(...)), ...]\n+ results = await asyncio.gather(*tasks)\n- _pytest_rc, pytest_out, pytest_err = await pytest_task",
+      "confidence": 0.98
+    },
+    {
+      "id": "C_tests-01",
+      "axis": "C_tests",
+      "severity": "P2",
+      "file": "tests/regression/test_round10_8_audit_patches.py",
+      "lines": "48-57",
+      "title": "Path traversal regression assertions are neutered with 'or True'",
+      "evidence": "The absolute path tests end with assert not Path('/tmp/evil').exists() or True and assert not Path('/etc/passwd').exists() or True.",
+      "impact": "A future regression that writes to the forbidden absolute path could still pass this assertion, weakening coverage for the sprint's main P0 security fix.",
+      "poc": "Any boolean expression followed by 'or True' always passes; lines 57 and tests/regression/test_cli_file_write_parsing.py:283 cannot detect filesystem writes.",
+      "remediation": "+ outside = tmp_path / 'outside.py'\n+ n = write_files_to_worktree({str(outside): 'x'}, worktree)\n+ assert n == 0\n+ assert not outside.exists()",
+      "confidence": 0.97
+    },
+    {
+      "id": "F_documentation-01",
+      "axis": "F_documentation",
+      "severity": "P2",
+      "file": "docs/RUNBOOK_PRODUCTION.md",
+      "lines": "1-63",
+      "title": "Production runbook points to stale commit and wrong checkout path",
+      "evidence": "The runbook states commit e7f3d86 at line 3 and uses /Users/radu/Downloads/polybuild_v3-2 at lines 22 and 57, while the audited target is 2b3c12f under /Users/radu/Developer/projects/polybuild_v3.",
+      "impact": "Operators following the runbook can install and smoke-test a stale tree, invalidating the prod-launch validation for this sprint.",
+      "poc": "Running the pre-flight exactly as documented installs from /Users/radu/Downloads/polybuild_v3-2, not the audited local repository.",
+      "remediation": "- État au commit `e7f3d86`\n+ État au commit `2b3c12f`\n- cd /Users/radu/Downloads/polybuild_v3-2\n+ cd /Users/radu/Developer/projects/polybuild_v3",
+      "confidence": 0.91
+    },
+    {
+      "id": "B_quality-02",
+      "axis": "B_quality",
+      "severity": "P2",
+      "file": "src/polybuild/orchestrator/__init__.py",
+      "lines": "700-729",
+      "title": "Dry-run runs are reported as committed even when Phase 7 is skipped",
+      "evidence": "PolybuildRun is initialized with final_status='committed' before the skip_commit branch; if skip_commit is True, commit_sha remains None but status stays committed.",
+      "impact": "The documented --no-commit smoke/low-risk runs can return a misleading committed status, corrupting postmortem data and CLI success semantics.",
+      "poc": "Run with --no-commit --no-smoke: lines 723-729 skip phase_7_commit(), but no line changes final_status away from 'committed'.",
+      "remediation": "+ final_status='validated' if skip_commit else 'committed'\n+ if not skip_commit:\n+     ...\n+     run.final_status = 'committed'",
+      "confidence": 0.89
+    }
+  ],
+  "false_positives_avoided": [
+    "H1 and H2 were searched and not reported as real symbols.",
+    "I did not report residual traversal in safe_write: it resolves the target and enforces is_relative_to(worktree.resolve()).",
+    "I did not claim confirmed Phase 2 PII exfiltration for excludes_openrouter because OpenRouterAdapter.generate has its own disqualification guard.",
+    "I did not report O(n^2) regex behavior in _json_extract; the visible regex is lazy and no quadratic PoC was established.",
+    "I did not rerun the full 199-test suite in this read-only audit; findings are based on code and test inspection."
+  ],
+  "verdict_global": "MAJOR_ISSUES",
+  "confidence_global": 0.88
+}
