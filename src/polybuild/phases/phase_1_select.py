@@ -148,9 +148,19 @@ def filter_candidates(
     if risk_profile.excludes_openrouter:
         filtered = [v for v in filtered if not is_openrouter_routed(v)]
     if risk_profile.excludes_us_cn_models:
+        # Round 10.8 POLYLENS [Gemini GEMINI-03 P1]: the legacy override
+        # ``or v.startswith("qwen")`` was meant to keep LOCAL Ollama
+        # Qwen (``qwen2.5-coder:14b-int4``) — identified by the ``:``
+        # in the voice id. But the same ``startswith("qwen")`` ALSO
+        # matched OpenRouter Chinese models (``qwen/qwen3.6-max-preview``,
+        # ``qwen/qwen3.6-coder``), silently letting Alibaba data flow
+        # through despite ``excludes_us_cn_models=True``. Tighten the
+        # whitelist : keep ``qwen<X>:Y`` (NAS Ollama tag), reject
+        # ``qwen/<anything>`` (OpenRouter remote).
         filtered = [
             v for v in filtered
-            if not is_us_or_cn_model(v) or v.startswith("qwen")  # local Qwen OK
+            if not is_us_or_cn_model(v)
+            or (v.startswith("qwen") and ":" in v)  # LOCAL Ollama Qwen only
         ]
     return filtered
 

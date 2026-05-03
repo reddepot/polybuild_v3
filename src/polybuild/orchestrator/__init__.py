@@ -751,6 +751,14 @@ async def _run_polybuild_inner(
         # the user has explicitly allowed via POLYBUILD_PHASE_8_ALLOWLIST
         # (comma-separated). Localhost/loopback is allowed only when the
         # caller sets POLYBUILD_PHASE_8_ALLOW_LOCAL=1.
+        # Round 10.8 POLYLENS [Gemini GEMINI-02 P0]: the previous version
+        # relied on string matching (``host.startswith("169.254.")``)
+        # which can be bypassed with non-standard IP encodings —
+        # decimal (``2852039166``), octal (``0251.0376.0251.0376``),
+        # hex (``0xa9fea9fe``). All of those resolve to
+        # ``169.254.169.254`` (AWS IMDS) once the OS network stack
+        # parses them. ``ipaddress`` normalizes correctly.
+        import ipaddress
         from urllib.parse import urlparse
 
         parsed = urlparse(str(endpoint))
@@ -762,9 +770,26 @@ async def _run_polybuild_inner(
                 f"phase_8_endpoint scheme not allowed: {parsed.scheme!r}"
             )
         host = (parsed.hostname or "").lower()
-        is_local = host in {"localhost", "127.0.0.1", "::1"} or host.startswith(
-            "169.254."
-        )
+
+        is_local = host in {"localhost"}
+        # Try to parse the host as an IP and inspect normalised flags —
+        # works for any encoding (decimal/hex/octal/IPv4-mapped IPv6).
+        try:
+            ip = ipaddress.ip_address(host)
+            is_local = is_local or (
+                ip.is_loopback
+                or ip.is_link_local
+                or ip.is_private
+                or ip.is_multicast
+                or ip.is_reserved
+                or ip.is_unspecified
+            )
+        except ValueError:
+            # Hostname (not an IP) — keep ``is_local`` as the localhost
+            # check above (the actual DNS resolution to a private IP is
+            # caught by the user's network policy, not by us).
+            pass
+
         if is_local and not allow_local:
             raise RuntimeError(
                 f"phase_8_endpoint targets a local/metadata host ({host!r}). "

@@ -110,6 +110,39 @@ class TestFilterCandidates:
         rp = RiskProfile()
         assert filter_candidates(pool, rp) == pool
 
+    def test_excludes_us_cn_keeps_local_ollama_qwen(self) -> None:
+        # Round 10.8 POLYLENS [Gemini GEMINI-03 P1]: ensure that the
+        # ``qwen<X>:Y`` LOCAL Ollama tag is kept under
+        # ``excludes_us_cn_models=True``, while ``qwen/<anything>`` (OR
+        # remote = Alibaba CN) is rejected.
+        pool = [
+            "qwen2.5-coder:14b-int4",  # local Ollama, must stay
+            "qwen2.5-coder:7b-int4",  # local Ollama, must stay
+            "qwen/qwen3.6-max-preview",  # OR Alibaba CN, must go
+            "qwen/qwen3.6-coder",  # OR Alibaba CN, must go
+            "z-ai/glm-4.6",  # OR ZhipuAI CN, must go
+            "moonshotai/kimi-k2.6",  # OR Moonshot CN, must go
+            "minimax/minimax-m2.7",  # OR MiniMax CN, must go
+            "xiaomi/mimo-v2.5-pro",  # OR Xiaomi CN, must go
+            "mistral/devstral-2",  # Mistral EU direct, must stay
+        ]
+        rp = RiskProfile(excludes_us_cn_models=True)
+        out = filter_candidates(pool, rp)
+        # Local Ollama Qwen + Mistral EU stay
+        assert "qwen2.5-coder:14b-int4" in out
+        assert "qwen2.5-coder:7b-int4" in out
+        assert "mistral/devstral-2" in out
+        # All Chinese OR remote MUST be filtered out
+        for cn in (
+            "qwen/qwen3.6-max-preview",
+            "qwen/qwen3.6-coder",
+            "z-ai/glm-4.6",
+            "moonshotai/kimi-k2.6",
+            "minimax/minimax-m2.7",
+            "xiaomi/mimo-v2.5-pro",
+        ):
+            assert cn not in out, f"Chinese voice {cn} leaked despite excludes_us_cn_models=True"
+
     def test_excludes_openrouter(self) -> None:
         pool = ["gpt-5.5", "deepseek/deepseek-v4-pro", "mistral/devstral-2"]
         rp = RiskProfile(excludes_openrouter=True)

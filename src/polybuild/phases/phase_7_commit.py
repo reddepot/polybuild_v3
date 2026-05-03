@@ -430,39 +430,22 @@ async def phase_7_commit(
                         f"(paths={rel_paths[:5]}...)"
                     )
 
-            # Round 10.4 fix [ChatGPT P7-403 P1 — lost deletions]: if the
-            # winner removed a previously-tracked file, the absence is
-            # invisible to the loop above (only present files are copied).
-            # Stage deletions explicitly: any tracked file under our scope
-            # that no longer exists in the worktree must be ``git rm``'d.
-            scope_prefixes: list[str] = []
-            if prefix_to_restore:
-                scope_prefixes.append(prefix_to_restore + "/")
-            scope_prefixes.append("tests/")
-            tracked_rc, tracked_out, _ = await _git(
-                "ls-files", cwd=project_root
-            )
-            if tracked_rc == 0:
-                tracked_paths = [
-                    Path(line)
-                    for line in tracked_out.splitlines()
-                    if any(line.startswith(p) for p in scope_prefixes)
-                ]
-                staged_rel = {p.relative_to(project_root) for p in staged_paths}
-                deletions = [
-                    p for p in tracked_paths if p not in staged_rel
-                ]
-                if deletions:
-                    for chunk_start in range(0, len(deletions), 50):
-                        chunk_del = deletions[chunk_start : chunk_start + 50]
-                        rc, _, stderr = await _git(
-                            "rm", "--", *(str(p) for p in chunk_del),
-                            cwd=project_root,
-                        )
-                        if rc != 0:
-                            raise RuntimeError(
-                                f"phase_7_rm_batch_failed: {stderr}"
-                            )
+            # Round 10.8 POLYLENS [Gemini GEMINI-01 P0 CRITICAL]: the
+            # Round 10.4 ChatGPT P7-403 patch ("lost deletions") assumed
+            # the LLM emits the *entire* scope (all of ``src/``, all of
+            # ``tests/``). In reality, our adapter contract is
+            # ``files: {<path>: <content>}`` — the model writes ONLY the
+            # specific module the brief asks for, not the whole repo.
+            # Therefore ``tracked_paths - staged_rel`` ≈ the entire repo,
+            # and the ``git rm`` call MASSIVELY DELETED legitimate files
+            # on every incremental Phase 7 commit. This is data-loss
+            # CRITICAL — the patch is removed entirely.
+            #
+            # If a future use-case wants explicit deletion semantics, the
+            # adapter contract should be extended with an explicit
+            # ``deleted_files: [<path>, ...]`` field in the JSON payload,
+            # so we delete ONLY what the LLM marked as removed — never
+            # by exclusion from the staged set.
         else:
             logger.warning("phase_7_no_winner_files_to_stage")
 
