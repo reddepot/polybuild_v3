@@ -230,14 +230,22 @@ Working directory: {worktree}
 """
 
     def _load_agents_md(self) -> str:
+        """Load AGENTS.md sanitized through sanitize_prompt_context.
+
+        Round 10.2.1 fix [ChatGPT RX-001 P0 + Kimi RX-007 P1] — adapters
+        were embedding the raw file content into the LLM prompt, bypassing
+        the sanitization the orchestrator applied for the privacy gate.
+        We now sanitize at every injection point as defence in depth.
+        """
+        from polybuild.security.prompt_sanitizer import sanitize_prompt_context
         """Load project AGENTS.md or fallback to global."""
         local = Path("AGENTS.md")
         if local.exists():
-            return local.read_text()
+            return sanitize_prompt_context(local.read_text())
         global_agents = Path.home() / ".polybuild" / "global_agents.md"
         if global_agents.exists():
-            return global_agents.read_text()
-        return "# AGENTS.md\n(no project conventions defined)"
+            return sanitize_prompt_context(global_agents.read_text())
+        return sanitize_prompt_context("# AGENTS.md\n(no project conventions defined)")
 
     def _parse_output(
         self,

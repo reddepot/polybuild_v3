@@ -121,6 +121,39 @@ Le LLM (Opus, Codex, Gemini) interprète ce commentaire et peut être détourné
 
 ---
 
+## Mise à jour Round 10.2.1 — adapter sanitization (ChatGPT + Kimi convergent)
+
+ChatGPT a rejoint le cycle d'audit après que le repo public soit devenu
+indexable, et a confirmé le finding **convergent 2/4** ChatGPT RX-001 P0 +
+Kimi RX-007 P1 que le round 10.2 n'avait pas patché : les 7 adapters
+chargent `AGENTS.md` via `_load_agents_md()` puis l'embarquent dans
+`_build_prompt()`, **bypassant la sanitization** que l'orchestrator
+applique uniquement avant la privacy gate.
+
+**Patch** : chaque `_load_agents_md` des 7 adapters passe désormais le
+contenu par `sanitize_prompt_context` — défense en profondeur à chaque
+point d'injection.
+
+**Tests** : 14 nouveaux tests régression (7 voix × 2 scenarios :
+HTML comments + NFKC homoglyph). Honeypot adversarial avec 4 vecteurs
+combinés confirme 4/4 adapters défendus.
+
+**Suite cumulée** : 349 passed, 8 xfailed, 0 failed.
+
+ChatGPT R2 INSUFFICIENT a été acté comme partial-FAUX-positif : la
+normalisation NFKC est bien appliquée à la fois dans la privacy gate
+(Round 10.1) et dans `sanitize_prompt_context` (Round 10.2). Le seul
+gap réel était les adapters → couvert par ce patch 10.2.1.
+
+ChatGPT RX-002 (limiter `_inflight` drift) reste documenté en backlog —
+Kimi a déjà falsifié ce finding (`finally` Python garantit décrément
+sur `CancelledError`). L'option async context manager `_track_inflight`
+proposée par ChatGPT est un hardening défensif acceptable mais pas
+critique ; reporté en Round 10.3.
+
+ChatGPT RX-004 (Phase 8 gather) — déjà patché en Round 10.2 (Kimi RX-004).
+ChatGPT regardait probablement une version intermédiaire.
+
 ## Mise à jour Round 10.2 — patches post-audit Gemini+Grok+Qwen+Kimi
 
 Second cycle d'audit cross-LLM sur le commit Round 10.1. 4 voix orthogonales
