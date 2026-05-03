@@ -133,7 +133,9 @@ class TestPromptTemplateGuard:
 class TestKimiRX001ShutdownDrainAwaited:
     def test_module_exposes_drain_task_registry(self) -> None:
         from polybuild.orchestrator import _SHUTDOWN_DRAIN_TASKS
-        assert isinstance(_SHUTDOWN_DRAIN_TASKS, list)
+        # Round 10.6: registry switched from list to dict[run_id, list]
+        # for concurrent-runs isolation (Gemini ZB-01 + Kimi RX-301-06).
+        assert isinstance(_SHUTDOWN_DRAIN_TASKS, dict)
 
 
 # ──────────────────────────────────────────────────────────────────────

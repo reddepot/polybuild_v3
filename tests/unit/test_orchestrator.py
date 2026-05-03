@@ -41,7 +41,9 @@ from polybuild.phases.phase_minus_one_privacy import PrivacyVerdict
 class TestGenerateRunId:
     def test_format(self) -> None:
         rid = generate_run_id()
-        assert re.match(r"^\d{4}-\d{2}-\d{2}_\d{6}_[0-9a-f]{4}$", rid)
+        # Round 10.6 [Gemini ZB-03 P1]: suffix widened from 4 to 16 hex
+        # chars (token_hex(2) → token_hex(8)) for collision resistance.
+        assert re.match(r"^\d{4}-\d{2}-\d{2}_\d{6}_[0-9a-f]{16}$", rid)
 
     def test_unique(self) -> None:
         assert generate_run_id() != generate_run_id()

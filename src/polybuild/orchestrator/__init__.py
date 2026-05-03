@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -47,7 +48,12 @@ logger = structlog.get_logger()
 # Round 10.2 fix [Kimi RX-001]: tasks created by the shutdown handler are
 # tracked here so run_polybuild() can await them explicitly in its finally
 # block, instead of relying on a fire-and-forget pattern.
-_SHUTDOWN_DRAIN_TASKS: list[asyncio.Task[None]] = []
+# Round 10.6 fix [Kimi RX-301-06 + Gemini ZB-01] (2/5 conv, P0): the list
+# was global and shared across concurrent runs in the same process; one
+# run's shutdown drained another run's tasks. Switched to a per-run-id
+# registry guarded by an asyncio.Lock so concurrent runs are isolated.
+_SHUTDOWN_DRAIN_TASKS: dict[str, list[asyncio.Task[None]]] = {}
+_SHUTDOWN_DRAIN_LOCK = asyncio.Lock()
 
 
 def _resolve_config_root() -> Path:
@@ -141,7 +147,9 @@ def _handle_shutdown_signal(sig: int, run_id: str) -> None:
             return
         # Module-level registry so run_polybuild() can collect the task and
         # await it explicitly. RUF006: no fire-and-forget.
-        _SHUTDOWN_DRAIN_TASKS.append(loop.create_task(_drain()))
+        _SHUTDOWN_DRAIN_TASKS.setdefault(run_id, []).append(
+            loop.create_task(_drain())
+        )
 
 
 def save_checkpoint(
@@ -162,11 +170,18 @@ def save_checkpoint(
 
 
 def generate_run_id() -> str:
-    """Format: 2026-05-03_143022_a4f7."""
+    """Format: 2026-05-03_143022_<16-hex>.
+
+    Round 10.6 fix [Gemini ZB-03 P1]: ``token_hex(2)`` only had 65 536
+    possible suffixes — at one run/sec the birthday-bound collision rate
+    is ~1/256 per hour. Two concurrent collisions silently overwrite each
+    other's checkpoints. Using ``token_hex(8)`` (= 16 hex chars / 64 bit)
+    pushes the practical collision boundary out of reach.
+    """
     import secrets
 
     ts = datetime.now(UTC).strftime("%Y-%m-%d_%H%M%S")
-    suffix = secrets.token_hex(2)
+    suffix = secrets.token_hex(8)
     return f"{ts}_{suffix}"
 
 
@@ -267,8 +282,8 @@ async def run_polybuild(
         # warnings AND the cooperative drain effectively becomes
         # fire-and-forget — so a coroutine guarded by ``asyncio.shield()``
         # would survive into phase_9 cleanup.
-        drain_tasks = list(_SHUTDOWN_DRAIN_TASKS)
-        _SHUTDOWN_DRAIN_TASKS.clear()
+        # Round 10.6: only drain THIS run's tasks (concurrent runs OK).
+        drain_tasks = list(_SHUTDOWN_DRAIN_TASKS.pop(run_id, []))
         if drain_tasks:
             try:
                 await asyncio.wait_for(
@@ -372,6 +387,24 @@ async def _run_polybuild_inner(
     # spec.yaml lookup: convention is the brief file living next to spec.yaml,
     # or an explicit spec_yaml_path passed in via project_ctx.
     spec_yaml_path = (project_ctx or {}).get("spec_yaml_path")
+
+    # Round 10.6 fix [Gemini ZB-06 P1 — path traversal]: the spec.yaml
+    # path is caller-supplied; without normalisation a value such as
+    # ``../../etc/passwd`` would escape the project root. Resolve and
+    # require the result to be inside ``project_root``.
+    if spec_yaml_path is not None:
+        try:
+            resolved_spec = Path(spec_yaml_path).resolve()
+            project_root_resolved = project_root.resolve()
+            if not resolved_spec.is_relative_to(project_root_resolved):
+                raise RuntimeError(
+                    f"spec_yaml_path escapes project_root: {resolved_spec}"
+                )
+            spec_yaml_path = resolved_spec
+        except OSError as e:
+            raise RuntimeError(
+                f"spec_yaml_path resolve failed: {e}"
+            ) from e
     declared_sensitivity = (project_ctx or {}).get("declared_sensitivity")
 
     # Round 8 fix [Privacy-AGENTS] (4/6 audits round 8 P0 — Grok, Qwen, ChatGPT,
@@ -619,6 +652,40 @@ async def _run_polybuild_inner(
         )
 
         endpoint = project_ctx["phase_8_endpoint"]
+
+        # Round 10.6 fix [Gemini ZB-02 P0 — SSRF]: phase_8_endpoint comes
+        # straight from project_ctx (caller-controlled). Without an
+        # allowlist, an attacker that can populate project_ctx can pivot
+        # the smoke phase to localhost / link-local / cloud metadata
+        # endpoints (169.254.169.254). Restrict to https/http on hosts
+        # the user has explicitly allowed via POLYBUILD_PHASE_8_ALLOWLIST
+        # (comma-separated). Localhost/loopback is allowed only when the
+        # caller sets POLYBUILD_PHASE_8_ALLOW_LOCAL=1.
+        from urllib.parse import urlparse
+
+        parsed = urlparse(str(endpoint))
+        allowlist_env = os.environ.get("POLYBUILD_PHASE_8_ALLOWLIST", "")
+        allowlist = {h.strip() for h in allowlist_env.split(",") if h.strip()}
+        allow_local = os.environ.get("POLYBUILD_PHASE_8_ALLOW_LOCAL") == "1"
+        if parsed.scheme not in ("http", "https"):
+            raise RuntimeError(
+                f"phase_8_endpoint scheme not allowed: {parsed.scheme!r}"
+            )
+        host = (parsed.hostname or "").lower()
+        is_local = host in {"localhost", "127.0.0.1", "::1"} or host.startswith(
+            "169.254."
+        )
+        if is_local and not allow_local:
+            raise RuntimeError(
+                f"phase_8_endpoint targets a local/metadata host ({host!r}). "
+                f"Set POLYBUILD_PHASE_8_ALLOW_LOCAL=1 to opt in explicitly."
+            )
+        if allowlist and host not in allowlist:
+            raise RuntimeError(
+                f"phase_8_endpoint host {host!r} not in "
+                f"POLYBUILD_PHASE_8_ALLOWLIST={sorted(allowlist)}"
+            )
+
         golden_raw = project_ctx.get("phase_8_golden_queries", [])
         goldens = [GoldenQuery.model_validate(g) for g in golden_raw]
 
