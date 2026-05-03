@@ -10,12 +10,58 @@ Checks (ChatGPT + DeepSeek convergence):
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import os
+import socket
 from typing import Any
+from urllib.parse import urlparse
 
 import structlog
 from pydantic import BaseModel
 
 logger = structlog.get_logger()
+
+
+def _qdrant_url_is_safe(url: str) -> bool:
+    """Round 10.8 fix [ChatGPT A-04 P1] — SSRF guard for ``qdrant_url``.
+
+    Reject:
+      * non-http(s) schemes
+      * private / loopback / link-local destinations (unless override env
+        ``POLYBUILD_QDRANT_ALLOW_LOCAL=1`` is set, for dev/test)
+      * URLs that fail to parse
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    if not parsed.hostname:
+        return False
+    allow_local = os.environ.get("POLYBUILD_QDRANT_ALLOW_LOCAL") == "1"
+    if allow_local:
+        return True
+    # Resolve hostname to an IP and check address space
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, None)
+    except socket.gaierror:
+        # Unresolvable host — pass through; httpx will fail loudly.
+        return True
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if (
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+        ):
+            return False
+    return True
 
 
 class QdrantGateResult(BaseModel):
@@ -60,6 +106,17 @@ async def validate_qdrant_collection(
             passed=False,
             collection_name=collection,
             errors=["httpx_unavailable"],
+        )
+
+    # Round 10.8 fix [ChatGPT A-04 P1, cross-voice audit]: SSRF guard.
+    # ``qdrant_url`` may originate from user / config and was previously
+    # used verbatim. Reject schemes other than http/https, reject
+    # private/loopback/link-local addresses unless explicitly allowed.
+    if not _qdrant_url_is_safe(qdrant_url):
+        return QdrantGateResult(
+            passed=False,
+            collection_name=collection,
+            errors=[f"qdrant_url_unsafe: {qdrant_url!r} blocked by SSRF guard"],
         )
 
     errors: list[str] = []

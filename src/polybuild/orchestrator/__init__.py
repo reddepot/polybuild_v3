@@ -159,6 +159,29 @@ def _handle_shutdown_signal(sig: int, run_id: str) -> None:
         )
 
 
+def _atomic_write_text(target: Path, payload: str) -> None:
+    """Round 10.8 fix [Kimi B-01 P1]: shared atomic-write helper.
+
+    Mirrors ``save_checkpoint``'s tmp+rename + EXDEV fallback so that any
+    caller writing a final artefact gets the same crash-safety guarantee.
+    """
+    import errno
+    import shutil
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_text(payload)
+    try:
+        tmp.rename(target)
+    except OSError as e:
+        if e.errno != errno.EXDEV:
+            raise
+        target_tmp = target.with_suffix(target.suffix + ".tmp.cd")
+        shutil.copy2(tmp, target_tmp)
+        target_tmp.replace(target)
+        tmp.unlink()
+
+
 def save_checkpoint(
     run_id: str, phase: str, payload: dict[str, Any], root: Path
 ) -> None:
@@ -202,6 +225,26 @@ def save_checkpoint(
 # ────────────────────────────────────────────────────────────────
 # RUN ID GENERATION
 # ────────────────────────────────────────────────────────────────
+
+
+def _sanitize_run_id(raw: str) -> str:
+    """Round 10.8 fix [Kimi A-03/A-04/A-05 P1]: ``run_id`` is concatenated
+    into filesystem paths and prompt XML wrappers throughout the codebase.
+    Reject anything that could escape:
+
+      * ``..`` traversal
+      * absolute paths (``/foo``)
+      * newlines / control chars (prompt XML break-out)
+      * leading dot (hidden files)
+
+    Strategy: replace any unsafe character with ``_`` and clamp length.
+    Empty result falls back to ``generate_run_id()`` at the call site.
+    """
+    import re
+
+    cleaned: str = re.sub(r"[^A-Za-z0-9_\-]", "_", raw.strip())
+    cleaned = cleaned.lstrip(".-_")[:128]
+    return cleaned
 
 
 def generate_run_id() -> str:
@@ -254,7 +297,14 @@ async def run_polybuild(
     not just the happy path. Audit 5 flagged this trou de spec.
     """
     # Round 5 [M]: optional run_id override from project_ctx (skill /polybuild)
+    # Round 10.8 fix [Kimi A-03/A-04/A-05 P1, cross-voice audit]: ``run_id``
+    # is concatenated into filesystem paths in many places (worktree dirs,
+    # checkpoint files, spec_final.json, prompt XML wrappers). A user-
+    # supplied override containing ``../`` or ``\\n`` would escape the
+    # sandbox or hijack adversarial XML blocks. Sanitize once at ingestion.
     override = (project_ctx or {}).get("run_id_override")
+    if override is not None:
+        override = _sanitize_run_id(override)
     run_id = override if override else generate_run_id()
     started_at = datetime.now(UTC)
     artifacts_dir = project_root / ".polybuild" / "runs"
@@ -758,8 +808,24 @@ async def _run_polybuild_inner(
     # ── Phase 9 cleanup is now in run_polybuild()'s outer finally (round 5 [N]) ──
 
     # Final archival
+    # Round 10.8 fix [Kimi B-01 P1, cross-voice audit]: previously a raw
+    # ``write_text`` here. A full-disk / read-only / cross-device error at
+    # the LAST millisecond would crash a successful 45+ minute run with
+    # an unhandled OSError. Reuse the same atomic + EXDEV-safe pattern as
+    # ``save_checkpoint`` and degrade gracefully instead of crashing.
     final_path = artifacts_dir / run_id / "polybuild_run.json"
-    final_path.write_text(run.model_dump_json(indent=2))
+    try:
+        _atomic_write_text(
+            target=final_path, payload=run.model_dump_json(indent=2)
+        )
+    except OSError as e:
+        logger.error(
+            "final_archival_failed",
+            run_id=run_id,
+            target=str(final_path),
+            error=str(e),
+            hint="run completed successfully but archival failed; check disk space / permissions",
+        )
 
     logger.info(
         "polybuild_done",

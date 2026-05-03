@@ -127,9 +127,15 @@ class TestResolvePromptsDir:
 
 class TestLoadPrompt:
     def test_load_existing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Round 10.8 fix [Kimi C-01 P1, cross-voice audit]: this test
+        # broke after Round 10.7 introduced the required-placeholder
+        # anti-tampering check (Kimi C-07 patch switched the opt-out to
+        # POLYBUILD_PROMPTS_DEBUG, so PROMPTS_DIR no longer disables it).
+        # Write a template that satisfies the required {finding_id}
+        # placeholder for the critic role.
         prompts = tmp_path / "prompts"
         prompts.mkdir()
-        (prompts / "critic.md").write_text("# Critic prompt")
+        (prompts / "critic.md").write_text("# Critic prompt for {finding_id}")
         monkeypatch.setenv("POLYBUILD_PROMPTS_DIR", str(prompts))
         # Réinitialiser le cache module-level
         monkeypatch.setattr(
@@ -138,6 +144,7 @@ class TestLoadPrompt:
         )
         content = _load_prompt("critic")
         assert "Critic" in content
+        assert "{finding_id}" in content
 
     def test_missing_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         prompts = tmp_path / "prompts"

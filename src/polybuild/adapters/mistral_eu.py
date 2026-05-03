@@ -212,12 +212,22 @@ EU-only routing. Output ONLY valid JSON.
         except json.JSONDecodeError as e:
             return self._failed_result(cfg, worktree, duration, f"Invalid JSON: {e}")
 
-        for rel_path, source in data.get("files", {}).items():
-            abs_path = worktree / rel_path
-            abs_path.parent.mkdir(parents=True, exist_ok=True)
-            abs_path.write_text(source)
+        # Round 10.8 fix [ChatGPT A-02 + Kimi A-01, 2/5 cross-voice P0]:
+        # same path traversal as the ollama_local + openrouter adapters.
+        # Use shared helper for consistency.
+        from polybuild.security.safe_write import write_files_to_worktree
 
+        if not isinstance(data, dict):
+            return self._failed_result(
+                cfg, worktree, duration,
+                f"Response JSON not a dict (got {type(data).__name__})",
+            )
+        write_files_to_worktree(
+            data.get("files", {}), worktree, adapter_name="mistral_eu"
+        )
         metrics_data = data.get("self_metrics", {})
+        if not isinstance(metrics_data, dict):
+            metrics_data = {}
         metrics = SelfMetrics(
             loc=metrics_data.get("loc", 0),
             complexity_cyclomatic_avg=metrics_data.get("complexity_cyclomatic_avg", 0.0),
