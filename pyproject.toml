@@ -52,6 +52,15 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/polybuild"]
 
+# Round 10.8 prod-launch fix: bundle prompts/ and config/ in the wheel.
+# Without ``force-include`` they live outside the package, so a wheel
+# install (uv tool install / pipx) cannot find them via ``parents[]``
+# walk. ``polybuild/prompts`` and ``polybuild/config`` mirror the
+# source-tree layout one level inside the package.
+[tool.hatch.build.targets.wheel.force-include]
+"prompts" = "polybuild/prompts"
+"config" = "polybuild/config"
+
 # ──────────────────────────────────────────────────
 # RUFF
 # ──────────────────────────────────────────────────
