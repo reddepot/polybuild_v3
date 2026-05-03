@@ -42,13 +42,16 @@ class ClaudeCodeAdapter(BuilderProtocol):
         prompt = self._build_prompt(spec, cfg, worktree)
 
         # TODO post-round 4: integrate with concurrency_limiter (Faille 3)
+        # Round 10.8 prod-launch fix: claude CLI v2 — no more ``code``
+        # subcommand, no ``--output-dir`` (the v2 CLI doesn't write files
+        # itself; the model emits JSON of files which our _parse_output
+        # then writes via the safe-write helper). ``-p PROMPT
+        # --output-format text`` is the new contract.
         cmd = [
             self.cli_binary,
-            "code",
+            "-p", prompt,
             "--model", self.model,
-            "--prompt", prompt,
-            "--output-dir", str(worktree),
-            "--output-format", "json",
+            "--output-format", "text",
         ]
 
         try:
@@ -121,7 +124,10 @@ class ClaudeCodeAdapter(BuilderProtocol):
             )
 
     async def smoke_test(self) -> bool:
-        """Verify the CLI works with a deterministic prompt."""
+        """Verify the CLI works with a deterministic prompt.
+
+        Round 10.8 prod-launch fix: claude CLI v2 surface (cf generate()).
+        """
         smoke_prompt = (
             "Write a Python function `def hello_polybuild(): return 'OK'`. "
             "Output JSON only: {\"code\": \"...\"}."
@@ -129,18 +135,23 @@ class ClaudeCodeAdapter(BuilderProtocol):
         try:
             proc = await asyncio.create_subprocess_exec(
                 self.cli_binary,
-                "code",
+                "-p", smoke_prompt,
                 "--model", self.model,
-                "--prompt", smoke_prompt,
-                "--output-format", "json",
+                "--output-format", "text",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=(sys.platform != "win32"),
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
-            data = json.loads(stdout.decode())
-            return "hello_polybuild" in data.get("code", "")
-        except (TimeoutError, json.JSONDecodeError, OSError):
+            text = stdout.decode().strip()
+            # Try strict JSON first; fall back to substring match if the
+            # model wrapped the JSON in markdown fencing.
+            try:
+                data = json.loads(text)
+                return "hello_polybuild" in data.get("code", "")
+            except json.JSONDecodeError:
+                return "hello_polybuild" in text
+        except (TimeoutError, OSError):
             return False
 
     async def is_available(self) -> bool:

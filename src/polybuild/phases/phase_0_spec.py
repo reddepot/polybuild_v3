@@ -128,11 +128,20 @@ Hard rules:
     # dedicated session id to take down the child *and* its grand-children
     # (e.g. the auth helper claude-code spawns). On Windows the flag is a
     # no-op so we gate it on platform.
+    # Round 10.8 prod-launch fix: claude CLI v2 (>= 2.x) replaced
+    # ``claude code --prompt X --output-format Y`` with positional prompt
+    # behind ``-p / --print`` (non-interactive mode); ``--output-format``
+    # only works under print mode. The legacy invocation now exits with
+    # ``error: unknown option '--prompt'``. Updated to the v2 surface.
+    # Round 10.8 prod-launch fix: claude CLI v2 surface — ``-p PROMPT
+    # --output-format text`` returns the raw model response (the JSON
+    # spec the LLM emits). ``json`` output-format wraps in an envelope
+    # with ``{result, usage, ...}``, which would break ``json.loads(raw)``
+    # here.
     proc = await asyncio.create_subprocess_exec(
-        "claude", "code",
-        "--model", "opus-4.7",
-        "--prompt", prompt,
-        "--output-format", "json",
+        "claude", "-p", prompt,
+        "--model", "claude-opus-4-7",
+        "--output-format", "text",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=(sys.platform != "win32"),
@@ -276,11 +285,20 @@ Output the COMPLETE revised spec as JSON, same schema as before.
 </ATTACK_FINDINGS>
 """
 
+    # Round 10.8 prod-launch fix: claude CLI v2 (>= 2.x) replaced
+    # ``claude code --prompt X --output-format Y`` with positional prompt
+    # behind ``-p / --print`` (non-interactive mode); ``--output-format``
+    # only works under print mode. The legacy invocation now exits with
+    # ``error: unknown option '--prompt'``. Updated to the v2 surface.
+    # Round 10.8 prod-launch fix: claude CLI v2 surface — ``-p PROMPT
+    # --output-format text`` returns the raw model response (the JSON
+    # spec the LLM emits). ``json`` output-format wraps in an envelope
+    # with ``{result, usage, ...}``, which would break ``json.loads(raw)``
+    # here.
     proc = await asyncio.create_subprocess_exec(
-        "claude", "code",
-        "--model", "opus-4.7",
-        "--prompt", prompt,
-        "--output-format", "json",
+        "claude", "-p", prompt,
+        "--model", "claude-opus-4-7",
+        "--output-format", "text",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=(sys.platform != "win32"),

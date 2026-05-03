@@ -57,13 +57,25 @@ class CodexCLIAdapter(BuilderProtocol):
         # with ``-`` (e.g. an LLM-formatted YAML doc, a list of options,
         # or a sanitization-resistant adversarial payload) would be
         # parsed as a CLI flag rather than the prompt body.
+        # Round 10.8 prod-launch fix: codex CLI 0.128.0 dropped
+        # ``--output-format`` (now ``--output-schema FILE`` for JSON-Schema
+        # validation, or ``--json`` for JSONL event stream). Default stdout
+        # is the model's text output, which is what we want — the parse
+        # logic downstream handles the model's emitted JSON.
+        # Round 10.8 prod-launch fix: ``--cd`` was receiving a path
+        # RELATIVE to the orchestrator's cwd, but the subprocess is
+        # already starting with ``cwd=worktree`` — codex would then
+        # resolve the relative ``--cd`` arg against its NEW cwd,
+        # producing a double-path (``cwd/worktree/cwd/worktree``) which
+        # doesn't exist → ``Error: No such file or directory (os error
+        # 2)``. Use the absolute path instead.
         cmd = [
             self.cli_binary,
             "exec",
             "-m", self.model,
             "-c", f"model_reasoning_effort={self.reasoning_effort}",
-            "--output-format", "json",
-            "--cd", str(worktree),
+            "--cd", str(worktree.resolve()),
+            "--skip-git-repo-check",
             "--",
             prompt,
         ]
@@ -98,6 +110,7 @@ class CodexCLIAdapter(BuilderProtocol):
             return self._timeout_result(cfg, worktree, duration)
 
     async def smoke_test(self) -> bool:
+        # Round 10.8 prod-launch fix: codex CLI 0.128 surface (cf generate()).
         smoke = (
             "Write Python: def hello_polybuild(): return 'OK'. "
             "Output JSON only: {\"code\": \"<source>\"}."
@@ -105,16 +118,21 @@ class CodexCLIAdapter(BuilderProtocol):
         try:
             proc = await asyncio.create_subprocess_exec(
                 self.cli_binary, "exec", "-m", self.model,
-                "--output-format", "json",
+                "--skip-git-repo-check",
+                "--",
                 smoke,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=(sys.platform != "win32"),
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
-            data = json.loads(stdout.decode())
-            return "hello_polybuild" in data.get("code", "")
-        except (TimeoutError, json.JSONDecodeError, OSError):
+            text = stdout.decode().strip()
+            try:
+                data = json.loads(text)
+                return "hello_polybuild" in data.get("code", "")
+            except json.JSONDecodeError:
+                return "hello_polybuild" in text
+        except (TimeoutError, OSError):
             return False
 
     async def is_available(self) -> bool:

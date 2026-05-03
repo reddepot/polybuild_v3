@@ -48,9 +48,16 @@ class GeminiCLIAdapter(BuilderProtocol):
         prompt = self._build_prompt(spec, cfg, worktree)
 
         # TODO post-round 4: concurrency_limiter integration (Faille 3)
-        cmd = [self.cli_binary, "-m", self.model]
+        # Round 10.8 prod-launch fix: gemini CLI 0.40 requires explicit
+        # workspace trust in headless mode. ``--skip-trust`` opts in for
+        # the current invocation. ``--yolo`` auto-approves tool calls so
+        # the CLI doesn't hang waiting for human confirmation.
+        # Round 10.8 prod-launch fix: same absolute-path requirement as
+        # codex_cli — ``--include-directories`` was getting a relative
+        # path doubled by ``cwd=worktree``.
+        cmd = [self.cli_binary, "-m", self.model, "--skip-trust", "--yolo"]
         if self.include_directories:
-            cmd.extend(["--include-directories", str(worktree)])
+            cmd.extend(["--include-directories", str(worktree.resolve())])
         cmd.extend(["--output-format", "json", "-p", prompt])
 
         try:
@@ -83,6 +90,7 @@ class GeminiCLIAdapter(BuilderProtocol):
             return self._timeout_result(cfg, worktree, duration)
 
     async def smoke_test(self) -> bool:
+        # Round 10.8 prod-launch fix: gemini CLI 0.40 surface (cf generate()).
         smoke = (
             "Write Python: def hello_polybuild(): return 'OK'. "
             "Output JSON only: {\"code\": \"<source>\"}."
@@ -90,15 +98,20 @@ class GeminiCLIAdapter(BuilderProtocol):
         try:
             proc = await asyncio.create_subprocess_exec(
                 self.cli_binary, "-m", self.model,
+                "--skip-trust", "--yolo",
                 "--output-format", "json", "-p", smoke,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=(sys.platform != "win32"),
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
-            data = json.loads(stdout.decode())
-            return "hello_polybuild" in data.get("code", "")
-        except (TimeoutError, json.JSONDecodeError, OSError):
+            text = stdout.decode().strip()
+            try:
+                data = json.loads(text)
+                return "hello_polybuild" in data.get("code", "")
+            except json.JSONDecodeError:
+                return "hello_polybuild" in text
+        except (TimeoutError, OSError):
             return False
 
     async def is_available(self) -> bool:

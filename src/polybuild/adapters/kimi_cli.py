@@ -46,12 +46,18 @@ class KimiCLIAdapter(BuilderProtocol):
         prompt = self._build_prompt(spec, cfg, worktree)
 
         # TODO post-round 4: concurrency_limiter integration (Faille 3)
-        cmd = [self.cli_binary, "--quiet"]
+        # Round 10.8 prod-launch fix: kimi CLI 1.41 dropped ``json`` from
+        # ``--output-format`` (now only ``text`` or ``stream-json``). Use
+        # ``text`` + ``--print`` ; downstream _parse_output handles the
+        # model's emitted JSON inside the text stream.
+        # ``--afk -y`` (away-from-keyboard + auto-approve) avoids
+        # interactive prompts in non-TTY environments.
+        cmd = [self.cli_binary, "--print", "--afk", "-y"]
         if self.thinking:
             cmd.append("--thinking")
         if self.plan:
             cmd.append("--plan")
-        cmd.extend(["--output-format", "json", "-p", prompt])
+        cmd.extend(["--output-format", "text", "-p", prompt])
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -83,22 +89,27 @@ class KimiCLIAdapter(BuilderProtocol):
             return self._timeout_result(cfg, worktree, duration)
 
     async def smoke_test(self) -> bool:
+        # Round 10.8 prod-launch fix: kimi CLI v1.41 surface (cf generate()).
         smoke = (
             "Write Python: def hello_polybuild(): return 'OK'. "
             "Output JSON only: {\"code\": \"<source>\"}."
         )
         try:
             proc = await asyncio.create_subprocess_exec(
-                self.cli_binary, "--quiet",
-                "--output-format", "json", "-p", smoke,
+                self.cli_binary, "--print", "--afk", "-y",
+                "--output-format", "text", "-p", smoke,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=(sys.platform != "win32"),
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
-            data = json.loads(stdout.decode())
-            return "hello_polybuild" in data.get("code", "")
-        except (TimeoutError, json.JSONDecodeError, OSError):
+            text = stdout.decode().strip()
+            try:
+                data = json.loads(text)
+                return "hello_polybuild" in data.get("code", "")
+            except json.JSONDecodeError:
+                return "hello_polybuild" in text
+        except (TimeoutError, OSError):
             return False
 
     async def is_available(self) -> bool:

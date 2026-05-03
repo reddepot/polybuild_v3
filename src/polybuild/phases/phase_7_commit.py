@@ -194,10 +194,10 @@ Accepted / Proposed / Deprecated
     # leave an orphan that survives the run.
     proc: asyncio.subprocess.Process | None = None
     try:
+        # Round 10.8 prod-launch fix: claude CLI v2 surface (cf phase_0_spec).
         proc = await asyncio.create_subprocess_exec(
-            "claude", "code",
-            "--model", "opus-4.7",
-            "--prompt", prompt,
+            "claude", "-p", prompt,
+            "--model", "claude-opus-4-7",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=(sys.platform != "win32"),
