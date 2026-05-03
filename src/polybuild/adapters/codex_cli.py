@@ -17,8 +17,10 @@ from pathlib import Path
 
 import structlog
 
+from polybuild.adapters._json_extract import _try_parse_json
 from polybuild.adapters.builder_protocol import BuilderProtocol
 from polybuild.models import BuilderResult, SelfMetrics, Spec, Status, VoiceConfig
+from polybuild.security.safe_write import write_files_to_worktree
 
 logger = structlog.get_logger()
 
@@ -192,9 +194,12 @@ Generate complete Python module + pytest tests.
 Write to:
   - {worktree}/src/*.py
   - {worktree}/tests/test_*.py
-Then output JSON to stdout:
+Then output **only** valid JSON to stdout (no prose, no markdown fencing):
 {{
-  "files_written": ["src/x.py", "tests/test_x.py"],
+  "files": {{
+    "src/<name>.py": "<full source code>",
+    "tests/test_<name>.py": "<full test source code>"
+  }},
   "self_metrics": {{
     "loc": <int>,
     "complexity_cyclomatic_avg": <float>,
@@ -230,14 +235,24 @@ Hard rules:
     def _parse_output(
         self, raw: str, worktree: Path, cfg: VoiceConfig, duration: float
     ) -> BuilderResult:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            data = {}
+        # Round 10.8 prod-launch follow-up: codex CLI 0.128 emits model
+        # output as text on stdout. The model may wrap JSON in markdown
+        # fencing or emit prose around it. We use a robust extraction chain.
+        # ``_try_parse_json`` already returns ``dict | None``; ``or {}``
+        # narrows to dict — no else-branch needed.
+        data = _try_parse_json(raw) or {}
 
+        files = data.get("files", {})
+        if isinstance(files, dict):
+            write_files_to_worktree(
+                files, worktree, adapter_name="codex_cli"
+            )
         metrics_data = data.get("self_metrics", {})
-        if metrics_data:
-            metrics = SelfMetrics(**metrics_data)
+        if isinstance(metrics_data, dict) and metrics_data:
+            try:
+                metrics = SelfMetrics(**metrics_data)
+            except (TypeError, ValueError):
+                metrics = self._estimate_metrics(worktree)
         else:
             metrics = self._estimate_metrics(worktree)
 

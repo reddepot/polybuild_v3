@@ -38,12 +38,17 @@ profiles:
       - gemini-3.1-pro      # CLI, ctx 2M
       - kimi-k2.6           # CLI, variantes créatives
     mediator: claude-opus-4.7
+    # Round 10.8 prod-launch fix: voix chinoises ajoutées au pool de
+    # diversité (bon marché + cross-cultural per POLYLENS v3).
     pool_for_diversity:
       - claude-opus-4.7
       - claude-sonnet-4.6
       - gpt-5.5
       - gemini-3.1-pro
       - kimi-k2.6
+      - z-ai/glm-4.6        # ZhipuAI 智谱 — stable, cost-efficient
+      - qwen/qwen3.6-max-preview  # Alibaba 阿里 — code+math
+      - moonshotai/kimi-k2.6      # OR fallback si CLI kimi down
     audit_axes: [B_quality, C_tests, E_architecture, F_documentation]
     domain_gates: []
     requires_probe: false
@@ -261,6 +266,32 @@ profiles:
     requires_probe: false
     min_diversity: 1.8
     timeout_phase2_min: 8
+
+  # ─── 16. Cross-cultural diversity (Round 10.8) ───
+  # Profile pour exploitation explicite des voix chinoises POLYLENS v3
+  # (cross-cultural convergence). Bon marché ($0.05-0.40 / 1M tokens).
+  cross_cultural_diversity:
+    description: "Tâche bénéficiant de la diversité de raisonnement cross-culturelle (occidental + chinois)"
+    voices_phase2:
+      - gpt-5.5                            # CLI, voix occidentale builder
+      - kimi-k2.6                          # CLI, voix chinoise (Moonshot)
+      - z-ai/glm-4.6                       # OR, voix chinoise (ZhipuAI)
+    mediator: claude-opus-4.7
+    pool_for_diversity:
+      - claude-opus-4.7
+      - gpt-5.5
+      - gemini-3.1-pro
+      - kimi-k2.6
+      - z-ai/glm-4.6
+      - z-ai/glm-5.1
+      - qwen/qwen3.6-max-preview
+      - qwen/qwen3.6-coder
+      - moonshotai/kimi-k2.6               # OR fallback
+    audit_axes: [B_quality, C_tests, E_architecture, G_adversarial]
+    domain_gates: []
+    requires_probe: false
+    min_diversity: 2.5
+    timeout_phase2_min: 15
 
 # ────────────────────────────────────────────────────────────────
 # AUDITEURS PAR FAMILLE GAGNANTE (Phase 4)

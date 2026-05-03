@@ -153,6 +153,61 @@ deepseek/deepseek-v4-flash:
   roles: [probe_50_loc, fallback_cli_down]
 
 # ────────────────────────────────────────────────────────────────
+# MODÈLES CHINOIS via OpenRouter (Round 10.8 — bon marché + diversité
+# cross-culturelle per POLYLENS v3 convergence requirement)
+# ────────────────────────────────────────────────────────────────
+
+z-ai/glm-5.1:
+  category: openrouter_optional
+  endpoint: "https://openrouter.ai/api/v1/chat/completions"
+  forces: [chinese_voice, multilingual, reasoning]
+  roles: [polylens_chinese_voice, audit_diversity]
+  notes: "ZhipuAI GLM 5.1, dernière génération. Reasoning model — peut consommer beaucoup de tokens."
+
+z-ai/glm-4.6:
+  category: openrouter_optional
+  endpoint: "https://openrouter.ai/api/v1/chat/completions"
+  forces: [chinese_voice, stable, lower_reasoning_cost]
+  roles: [code_diversity, audit_alternative]
+  notes: "Plus stable que 5.1 reasoning, meilleur ROI pour code generation."
+
+qwen/qwen3.6-max-preview:
+  category: openrouter_optional
+  endpoint: "https://openrouter.ai/api/v1/chat/completions"
+  forces: [chinese_voice, code_math_multilingual, contract_checking]
+  roles: [stateless_audit, code_alternative, polylens_chinese_voice]
+  notes: "Alibaba Qwen 3.6 max — fort sur code/math, multilingue natif."
+
+qwen/qwen3.6-coder:
+  category: openrouter_optional
+  endpoint: "https://openrouter.ai/api/v1/chat/completions"
+  forces: [code_specialist, chinese_voice]
+  roles: [code_focus, polylens_chinese_voice]
+  notes: "Variante coder de Qwen 3.6, optimisée pour génération de code."
+
+moonshotai/kimi-k2.6:
+  category: openrouter_optional
+  endpoint: "https://openrouter.ai/api/v1/chat/completions"
+  context_window: 2000000
+  forces: [long_context_2M, fr_native, chinese_voice]
+  roles: [long_context_audit, fallback_cli_kimi_down]
+  notes: "Kimi K2.6 via OR — fallback quand kimi CLI 1.41 ne répond pas. 2M ctx unique."
+
+minimax/minimax-m2.7:
+  category: openrouter_optional
+  endpoint: "https://openrouter.ai/api/v1/chat/completions"
+  forces: [chinese_voice, fast]
+  roles: [polylens_chinese_voice, code_alternative]
+  notes: "MiniMax M2.7 (上海稀宇科技). Risque loop dans output long — usage controlé."
+
+xiaomi/mimo-v2.5-pro:
+  category: openrouter_optional
+  endpoint: "https://openrouter.ai/api/v1/chat/completions"
+  forces: [chinese_voice, reasoning]
+  roles: [polylens_chinese_voice]
+  notes: "Xiaomi MiMo V2.5 Pro (小米). Reasoning model — risque token overflow, max_tokens élevé requis."
+
+# ────────────────────────────────────────────────────────────────
 # MODÈLES LOCAUX (NAS Synology DS224+ via Ollama)
 # ────────────────────────────────────────────────────────────────
 

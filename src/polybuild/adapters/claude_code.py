@@ -14,8 +14,10 @@ from pathlib import Path
 
 import structlog
 
+from polybuild.adapters._json_extract import _try_parse_json
 from polybuild.adapters.builder_protocol import BuilderProtocol
 from polybuild.models import BuilderResult, SelfMetrics, Spec, Status, VoiceConfig
+from polybuild.security.safe_write import write_files_to_worktree
 
 logger = structlog.get_logger()
 
@@ -223,11 +225,21 @@ Acceptance Criteria:
 
 <INSTRUCTIONS>
 Generate a complete Python module that satisfies ALL acceptance criteria.
-Output structure:
-  - src/*.py (the module code)
-  - tests/test_*.py (pytest tests, including happy/edge/failure scenarios)
-  - diff.patch (unified diff)
-  - self_metrics.json (loc, complexity, ratios, todos)
+Then output **only** valid JSON to stdout (no prose, no markdown fencing):
+{{
+  "files": {{
+    "src/<name>.py": "<full source code>",
+    "tests/test_<name>.py": "<full test source code>"
+  }},
+  "self_metrics": {{
+    "loc": <int>,
+    "complexity_cyclomatic_avg": <float>,
+    "test_to_code_ratio": <float>,
+    "todo_count": <int>,
+    "imports_count": <int>,
+    "functions_count": <int>
+  }}
+}}
 
 Hard rules:
   - Type hints everywhere (mypy --strict must pass)
@@ -270,27 +282,27 @@ Working directory: {worktree}
     ) -> BuilderResult:
         """Parse stdout JSON into a BuilderResult.
 
-        We try json.loads(raw) primarily as a sanity check that the CLI
-        produced something parseable; the actual structured fields come from
-        ``self_metrics.json`` (written by the builder skill into the worktree),
-        not from this stdout payload. A JSONDecodeError is therefore tolerated.
+        Round 10.8 prod-launch follow-up: claude CLI v2 emits the model's
+        output as text on stdout. The model may wrap JSON in markdown fencing
+        or emit prose around it. We extract the structured payload, write
+        files via ``write_files_to_worktree``, and fall back to estimated
+        metrics when the model omits them.
         """
-        try:
-            json.loads(raw)
-        except json.JSONDecodeError:
-            logger.debug("claude_stdout_not_json", voice=cfg.voice_id)
+        # ``_try_parse_json`` already returns ``dict | None``; ``or {}``
+        # narrows to dict — no else-branch needed.
+        data = _try_parse_json(raw) or {}
 
-        # Round 10.7 fix [GLM A-06 P1]: malformed self_metrics.json (e.g.
-        # builder writes invalid JSON, or types that Pydantic rejects)
-        # would otherwise crash the entire ``generate()`` call. Fall back
-        # to ``_estimate_metrics`` when parse/validation fails.
-        metrics_path = worktree / "self_metrics.json"
         metrics: SelfMetrics
-        if metrics_path.exists():
+        files = data.get("files", {})
+        if isinstance(files, dict):
+            write_files_to_worktree(
+                files, worktree, adapter_name="claude_code"
+            )
+        metrics_data = data.get("self_metrics", {})
+        if isinstance(metrics_data, dict) and metrics_data:
             try:
-                metrics_data = json.loads(metrics_path.read_text())
                 metrics = SelfMetrics(**metrics_data)
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
+            except (TypeError, ValueError) as e:
                 logger.warning(
                     "claude_metrics_parse_fallback",
                     voice=cfg.voice_id,
@@ -298,7 +310,6 @@ Working directory: {worktree}
                 )
                 metrics = self._estimate_metrics(worktree)
         else:
-            # Estimate metrics from worktree
             metrics = self._estimate_metrics(worktree)
 
         return BuilderResult(

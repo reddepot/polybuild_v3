@@ -275,13 +275,21 @@ class TestBuilderProtocolRunIdDeterministic:
 
 class TestClaudeCodeMetricsFallback:
     def test_handles_invalid_metrics_json(self) -> None:
+        # Round 10.8 prod-launch follow-up: claude CLI v2 no longer writes
+        # ``self_metrics.json`` to disk — metrics come from the stdout JSON
+        # via ``_try_parse_json`` + ``data.get("self_metrics", ...)``. The
+        # invariant is now : on parse error or missing payload, fall back
+        # to ``_estimate_metrics``.
         src = _read("adapters/claude_code.py")
-        idx = src.find("metrics_path = worktree / \"self_metrics.json\"")
+        idx = src.find("def _parse_output(")
         assert idx > 0
-        body = src[idx : idx + 800]
-        assert "json.JSONDecodeError, TypeError, ValueError" in body
+        body = src[idx : idx + 1500]
+        assert "_try_parse_json(raw)" in body
+        assert 'data.get("self_metrics", {})' in body
         assert "claude_metrics_parse_fallback" in body
         assert "self._estimate_metrics(worktree)" in body
+        # The legacy ``self_metrics.json`` file path read is gone.
+        assert 'metrics_path = worktree / "self_metrics.json"' not in src
 
 
 # ──────────────────────────────────────────────────────────────────────

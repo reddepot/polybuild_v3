@@ -159,6 +159,109 @@ class TestAtomicWriteHelper:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Phase 3 scoring — PYTHONPATH must include both `.` and `src`
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestPhase3ScoringPythonpath:
+    """Round 10.8 prod-launch follow-up: Phase 3 must support both
+    ``from foo import`` (PYTHONPATH=src) and ``from src.foo import``
+    (PYTHONPATH=. so ``src`` resolves as namespace-package)."""
+
+    def test_pythonpath_includes_dot_and_src(self) -> None:
+        src = _read("phases/phase_3_score.py")
+        idx = src.find("def run_general_gates(")
+        assert idx > 0
+        body = src[idx : idx + 1500]
+        assert 'pythonpath_parts = [".", "src"]' in body
+        assert "os.pathsep.join(pythonpath_parts)" in body
+        # Old single-element pattern is gone
+        assert '"PYTHONPATH": "src"}' not in body
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Round 10.8 follow-up — codex/claude file extraction via _try_parse_json
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestJsonExtractHelperExists:
+    def test_helper_module_present(self) -> None:
+        from polybuild.adapters._json_extract import _try_parse_json
+        assert callable(_try_parse_json)
+
+    def test_handles_direct_json(self) -> None:
+        from polybuild.adapters._json_extract import _try_parse_json
+        out = _try_parse_json('{"files": {"a.py": "x"}}')
+        assert out == {"files": {"a.py": "x"}}
+
+    def test_handles_fenced_json(self) -> None:
+        from polybuild.adapters._json_extract import _try_parse_json
+        wrapped = 'Here is the result:\n```json\n{"files": {"a.py": "x"}}\n```\nDone.'
+        out = _try_parse_json(wrapped)
+        assert out == {"files": {"a.py": "x"}}
+
+    def test_returns_none_on_garbage(self) -> None:
+        from polybuild.adapters._json_extract import _try_parse_json
+        assert _try_parse_json("just prose, no JSON here") is None
+
+
+class TestCodexCliFileExtraction:
+    def test_uses_try_parse_json_and_safe_write(self) -> None:
+        src = _read("adapters/codex_cli.py")
+        idx = src.find("def _parse_output(")
+        assert idx > 0
+        body = src[idx : idx + 1500]
+        assert "_try_parse_json(raw)" in body
+        assert 'write_files_to_worktree(' in body
+        assert 'adapter_name="codex_cli"' in body
+
+
+class TestClaudeCodeFileExtraction:
+    def test_uses_try_parse_json_and_safe_write(self) -> None:
+        src = _read("adapters/claude_code.py")
+        idx = src.find("def _parse_output(")
+        assert idx > 0
+        body = src[idx : idx + 1500]
+        assert "_try_parse_json(raw)" in body
+        assert 'write_files_to_worktree(' in body
+        assert 'adapter_name="claude_code"' in body
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Round 10.8 — Chinese voices added to adapter factory
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestChineseVoicesAdapterFactory:
+    """Voix chinoises bon marché — POLYLENS v3 cross-cultural diversity."""
+
+    def test_z_ai_glm_routed_to_openrouter(self) -> None:
+        from polybuild.adapters import get_builder
+        b = get_builder("z-ai/glm-5.1")
+        assert b.family == "zai"
+
+    def test_qwen_routed_to_openrouter(self) -> None:
+        from polybuild.adapters import get_builder
+        b = get_builder("qwen/qwen3.6-max-preview")
+        assert b.family == "qwen"
+
+    def test_minimax_routed_to_openrouter(self) -> None:
+        from polybuild.adapters import get_builder
+        b = get_builder("minimax/minimax-m2.7")
+        assert b.family == "minimax"
+
+    def test_xiaomi_routed_to_openrouter(self) -> None:
+        from polybuild.adapters import get_builder
+        b = get_builder("xiaomi/mimo-v2.5-pro")
+        assert b.family == "xiaomi"
+
+    def test_moonshotai_routed_to_openrouter(self) -> None:
+        from polybuild.adapters import get_builder
+        b = get_builder("moonshotai/kimi-k2.6")
+        assert b.family == "moonshot"
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Kimi A-03/04/05 — run_id sanitization
 # ──────────────────────────────────────────────────────────────────────
 

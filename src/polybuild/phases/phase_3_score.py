@@ -13,6 +13,7 @@ Anti-gaming:
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from pathlib import Path
 
@@ -28,7 +29,7 @@ logger = structlog.get_logger()
 # ────────────────────────────────────────────────────────────────
 
 GENERAL_GATE_COMMANDS = {
-    "pytest": "uv run pytest -q --tb=short --json-report --json-report-file=.pytest.json",
+    "pytest": "uv run pytest -q --tb=short",
     "mypy": "uv run mypy --strict src/",
     "ruff": "uv run ruff check src/ tests/",
     "bandit": "uv run bandit -r src/ -ll -f json -o .bandit.json",
@@ -42,13 +43,16 @@ GENERAL_GATE_COMMANDS = {
 # ────────────────────────────────────────────────────────────────
 
 
-async def run_command(cmd: str, cwd: Path, timeout: int = 60) -> tuple[int, str, str]:
+async def run_command(
+    cmd: str, cwd: Path, timeout: int = 60, env: dict[str, str] | None = None
+) -> tuple[int, str, str]:
     """Run a shell command, return (returncode, stdout, stderr)."""
     proc = await asyncio.create_subprocess_shell(
         cmd,
         cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -62,12 +66,38 @@ async def run_general_gates(workdir: Path) -> GateResults:
     """Run all general gates and aggregate results."""
     raw_outputs: dict[str, str] = {}
 
+    # Round 10.8 follow-up: builders emit ``import foo`` or
+    # ``from foo import ...`` expecting ``src/`` to be on PYTHONPATH.
+    # Without it pytest/mypy fail on import errors → 0 tests pass →
+    # hard disqualification (acceptance_pass_ratio < 0.5).
+    # Round 10.8 prod-launch follow-up: support BOTH ``from foo import``
+    # (needs ``src/`` on PYTHONPATH) AND ``from src.foo import`` (needs
+    # the worktree itself on PYTHONPATH so ``src.`` resolves as a
+    # package — ``src/`` rarely has an ``__init__.py`` in generated
+    # worktrees but Python 3 namespace-packages are resolved
+    # implicitly when their parent is on PYTHONPATH).
+    pythonpath_existing = os.environ.get("PYTHONPATH", "")
+    pythonpath_parts = [".", "src"]
+    if pythonpath_existing:
+        pythonpath_parts.append(pythonpath_existing)
+    gate_env = {**os.environ, "PYTHONPATH": os.pathsep.join(pythonpath_parts)}
+
     # Run gates in parallel where independent
-    pytest_task = run_command(GENERAL_GATE_COMMANDS["pytest"], workdir, timeout=120)
-    mypy_task = run_command(GENERAL_GATE_COMMANDS["mypy"], workdir, timeout=60)
-    ruff_task = run_command(GENERAL_GATE_COMMANDS["ruff"], workdir, timeout=30)
-    bandit_task = run_command(GENERAL_GATE_COMMANDS["bandit"], workdir, timeout=30)
-    gitleaks_task = run_command(GENERAL_GATE_COMMANDS["gitleaks"], workdir, timeout=30)
+    pytest_task = run_command(
+        GENERAL_GATE_COMMANDS["pytest"], workdir, timeout=120, env=gate_env
+    )
+    mypy_task = run_command(
+        GENERAL_GATE_COMMANDS["mypy"], workdir, timeout=60, env=gate_env
+    )
+    ruff_task = run_command(
+        GENERAL_GATE_COMMANDS["ruff"], workdir, timeout=30, env=gate_env
+    )
+    bandit_task = run_command(
+        GENERAL_GATE_COMMANDS["bandit"], workdir, timeout=30, env=gate_env
+    )
+    gitleaks_task = run_command(
+        GENERAL_GATE_COMMANDS["gitleaks"], workdir, timeout=30
+    )
 
     _pytest_rc, pytest_out, pytest_err = await pytest_task
     mypy_rc, mypy_out, mypy_err = await mypy_task
@@ -83,7 +113,7 @@ async def run_general_gates(workdir: Path) -> GateResults:
 
     # Coverage = separate pass to avoid double pytest
     _cov_rc, cov_out, _ = await run_command(
-        GENERAL_GATE_COMMANDS["coverage"], workdir, timeout=120
+        GENERAL_GATE_COMMANDS["coverage"], workdir, timeout=120, env=gate_env
     )
     raw_outputs["coverage"] = cov_out
 

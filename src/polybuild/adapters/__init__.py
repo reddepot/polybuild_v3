@@ -44,6 +44,11 @@ def get_builder(voice_id: str) -> BuilderProtocol:
         - "kimi-k2.6"
         - "deepseek/deepseek-v4-pro" (OR), "deepseek/deepseek-v4-flash" (OR)
         - "x-ai/grok-4.20" (OR)
+        - "z-ai/glm-5.1" / "z-ai/glm-4.6" (OR — ZhipuAI 智谱)
+        - "qwen/qwen3.6-max-preview" / "qwen/qwen3.6-coder" (OR — Alibaba 阿里)
+        - "moonshotai/kimi-k2.6" (OR — fallback when kimi CLI down)
+        - "minimax/minimax-m2.7" (OR — MiniMax 稀宇科技)
+        - "xiaomi/mimo-v2.5-pro" (OR — Xiaomi 小米)
         - "mistral/devstral-2" (Mistral EU direct, NOT OR)
         - "qwen2.5-coder:14b-int4" (Ollama local)
         - "qwen2.5-coder:7b-int4" (Ollama local)
@@ -76,6 +81,19 @@ def get_builder(voice_id: str) -> BuilderProtocol:
         return OpenRouterAdapter(slug=voice_id, family="deepseek")
     if voice_id.startswith("x-ai/"):
         return OpenRouterAdapter(slug=voice_id, family="xai")
+
+    # ── Round 10.8 prod-launch fix: Chinese voices via OpenRouter
+    # (cheap + diversity per POLYLENS v3 cross-cultural convergence) ──
+    if voice_id.startswith("z-ai/"):  # GLM (ZhipuAI/智谱)
+        return OpenRouterAdapter(slug=voice_id, family="zai")
+    if voice_id.startswith("qwen/"):  # Qwen (Alibaba/阿里)
+        return OpenRouterAdapter(slug=voice_id, family="qwen")
+    if voice_id.startswith("moonshotai/"):  # Kimi via OR (when CLI down)
+        return OpenRouterAdapter(slug=voice_id, family="moonshot")
+    if voice_id.startswith("minimax/"):  # MiniMax (上海稀宇科技)
+        return OpenRouterAdapter(slug=voice_id, family="minimax")
+    if voice_id.startswith("xiaomi/"):  # MiMo (Xiaomi/小米)
+        return OpenRouterAdapter(slug=voice_id, family="xiaomi")
 
     # ── Ollama local (Qwen on NAS) ──
     if voice_id.startswith("qwen") and ":" in voice_id:
