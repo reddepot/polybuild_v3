@@ -64,6 +64,41 @@ _THROTTLE_PATTERN = re.compile(
 )
 
 
+# ────────────────────────────────────────────────────────────────
+# YAML CONFIG SCHEMA (Round 10.1 fix [R5/R10])
+# ────────────────────────────────────────────────────────────────
+
+
+from pydantic import BaseModel, Field, ValidationError, field_validator  # noqa: E402
+
+
+class ConcurrencyLimitsConfig(BaseModel):
+    """Validated schema for ``config/concurrency_limits.yaml``.
+
+    Round 10.1 fix [R5 + R10] (5/6 conv: Grok / Qwen / Gemini / DeepSeek /
+    Kimi): the previous implementation used ``yaml.safe_load`` directly and
+    silently fell back to defaults on any malformed value (e.g.
+    ``claude: "deux"``). Now we validate the YAML against a Pydantic model
+    and surface validation errors so config drift is caught at boot rather
+    than at first use.
+    """
+
+    limits: dict[str, int] = Field(default_factory=dict)
+    profile_boosts: dict[str, dict[str, int]] = Field(default_factory=dict)
+
+    @field_validator("limits")
+    @classmethod
+    def _validate_limits(cls, v: dict[str, int]) -> dict[str, int]:
+        for provider, n in v.items():
+            if not isinstance(provider, str) or not provider:
+                raise ValueError(f"provider name must be non-empty str, got {provider!r}")
+            if not isinstance(n, int) or n < 1 or n > 64:
+                raise ValueError(
+                    f"limit for {provider!r} must be int in [1, 64], got {n!r}"
+                )
+        return v
+
+
 def is_throttle_error(message: str) -> bool:
     """Return True if `message` looks like a rate-limit/throttle error."""
     return bool(_THROTTLE_PATTERN.search(message or ""))
@@ -172,13 +207,23 @@ class CLILimiter:
         )
         if resolved is not None:
             try:
-                data = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
-                yaml_limits = data.get("limits", {})
-                if isinstance(yaml_limits, dict):
-                    limits.update({k: int(v) for k, v in yaml_limits.items()})
+                raw = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
+                # Round 10.1 fix [R5/R10]: Pydantic-validated load. A typo
+                # like ``claude: "deux"`` now raises ValidationError instead
+                # of silently falling back to defaults.
+                cfg = ConcurrencyLimitsConfig.model_validate(raw)
+                limits.update(cfg.limits)
                 logger.debug("concurrency_yaml_loaded", path=str(resolved))
-            except (yaml.YAMLError, ValueError) as e:
-                logger.warning("concurrency_yaml_parse_failed", error=str(e))
+            except yaml.YAMLError as e:
+                logger.error("concurrency_yaml_parse_failed", error=str(e))
+                raise
+            except ValidationError as e:
+                logger.error(
+                    "concurrency_yaml_validation_failed",
+                    error=str(e),
+                    path=str(resolved),
+                )
+                raise
         else:
             logger.info("concurrency_yaml_not_found_using_defaults")
 

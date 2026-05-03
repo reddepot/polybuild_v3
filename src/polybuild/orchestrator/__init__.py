@@ -49,10 +49,13 @@ def _handle_shutdown_signal(sig: int, run_id: str) -> None:
     tasks of the current run. The orchestrator's outer `finally:` block then
     runs phase_9_cleanup_async before the process exits.
 
-    Note: we cancel ALL tasks except the current one. asyncio will raise
-    CancelledError in each, propagating through the inner phases and
-    bubbling up to run_polybuild's try/finally. This is preferable to
-    sys.exit(0) which would skip the finally block.
+    Round 10.1 fix [R3 — graceful shutdown] (4/5 conv: Grok, Gemini, DeepSeek,
+    Kimi): a plain ``task.cancel()`` does not propagate into coroutines
+    wrapped in ``asyncio.shield()``. We additionally schedule a fallback
+    ``gather(..., return_exceptions=True)`` with a short timeout so that
+    even shielded tasks get a chance to wind down before the finally block
+    runs. The shutdown_event is also exposed via module-level state so
+    cooperative loops in long phases can opt-in to early exit.
     """
     logger.warning(
         "shutdown_signal_received",
@@ -61,9 +64,24 @@ def _handle_shutdown_signal(sig: int, run_id: str) -> None:
         hint="Cancelling tasks; phase_9 cleanup will run before exit.",
     )
     current = asyncio.current_task()
+    pending: list[asyncio.Task[Any]] = []
     for task in asyncio.all_tasks():
         if task is not current:
             task.cancel()
+            pending.append(task)
+
+    # Best-effort cooperative drain — bounded so we never block cleanup.
+    if pending:
+        async def _drain() -> None:
+            await asyncio.wait(pending, timeout=2.0)
+
+        with contextlib.suppress(RuntimeError):
+            # Loop is already closing → no fallback gather possible.
+            # Stash the future on the function object to satisfy RUF006
+            # (no fire-and-forget tasks).
+            _handle_shutdown_signal._drain_task = asyncio.ensure_future(  # type: ignore[attr-defined]
+                _drain()
+            )
 
 
 def save_checkpoint(
@@ -284,21 +302,36 @@ async def _run_polybuild_inner(
     # Adapters inject AGENTS.md and project_ctx into the LLM prompt AFTER the
     # gate runs, so PII hidden in those documents would bypass the gate
     # entirely. Concatenate them here.
+    # Round 10 fix [R1 — prompt injection via AGENTS.md] (6/6 convergence:
+    # Grok, Qwen, Gemini, DeepSeek, ChatGPT, Kimi): both AGENTS.md and the
+    # caller-supplied project_ctx text are sanitized through
+    # ``sanitize_prompt_context`` before being concatenated. HTML/Markdown
+    # comments, XML processing instructions, zero-width Unicode and obvious
+    # "ignore previous instructions" directives are stripped. Suspicious
+    # patterns that survive are logged so an external auditor can investigate.
+    from polybuild.security.prompt_sanitizer import sanitize_prompt_context
+
     additional_context_parts: list[str] = []
     agents_md_path = project_root / "AGENTS.md"
     if agents_md_path.exists():
         try:
-            additional_context_parts.append(
-                "<AGENTS_MD>\n" + agents_md_path.read_text(encoding="utf-8") + "\n</AGENTS_MD>"
+            agents_md_clean = sanitize_prompt_context(
+                agents_md_path.read_text(encoding="utf-8")
             )
+            if agents_md_clean:
+                additional_context_parts.append(
+                    "<AGENTS_MD>\n" + agents_md_clean + "\n</AGENTS_MD>"
+                )
         except OSError as e:
             logger.warning("phase_minus_one_agents_md_read_failed", error=str(e))
 
     project_ctx_text = (project_ctx or {}).get("extra_context_for_opus")
     if project_ctx_text:
-        additional_context_parts.append(
-            "<PROJECT_CONTEXT>\n" + str(project_ctx_text) + "\n</PROJECT_CONTEXT>"
-        )
+        ctx_clean = sanitize_prompt_context(str(project_ctx_text))
+        if ctx_clean:
+            additional_context_parts.append(
+                "<PROJECT_CONTEXT>\n" + ctx_clean + "\n</PROJECT_CONTEXT>"
+            )
 
     additional_context = (
         "\n".join(additional_context_parts) if additional_context_parts else None
@@ -385,11 +418,28 @@ async def _run_polybuild_inner(
     )
 
     # Determine winner (highest score, not disqualified, no critical grounding)
-    eligible = [
-        s for s in scores
-        if not s.disqualified
-        and len([f for f in grounding.get(s.voice_id, []) if f.severity == Severity.P0]) == 0
-    ]
+    # Round 10.1 fix [Kimi P0 #4]: previously we only counted P0 (syntax)
+    # findings. The audit pointed out that the spec rule "≥2 hallucinated
+    # imports = disqualification" lives in ``grounding_disqualifies`` and
+    # was never wired into the eligibility check. A builder with two
+    # hallucinations could therefore still be picked as winner. We now apply
+    # the canonical disqualification rule from phase_3b.
+    from polybuild.phases.phase_3b_grounding import grounding_disqualifies
+
+    eligible = []
+    for s in scores:
+        if s.disqualified:
+            continue
+        gfindings = grounding.get(s.voice_id, [])
+        dq, dq_reason = grounding_disqualifies(gfindings)
+        if dq:
+            logger.warning(
+                "grounding_disqualified_winner_candidate",
+                voice_id=s.voice_id,
+                reason=dq_reason,
+            )
+            continue
+        eligible.append(s)
     if not eligible:
         logger.error("no_eligible_winner")
         return _build_aborted_run(
@@ -398,8 +448,14 @@ async def _run_polybuild_inner(
 
     winner_score = eligible[0]
     winner_result = next(
-        r for r in builder_results if r.voice_id == winner_score.voice_id
+        (r for r in builder_results if r.voice_id == winner_score.voice_id),
+        None,
     )
+    if winner_result is None:
+        logger.error("winner_voice_id_not_in_builder_results", winner=winner_score.voice_id)
+        return _build_aborted_run(
+            run_id, profile_id, spec, builder_results, scores, started_at,
+        )
 
     # ── Phase 4: audit ──
     audit = await phase_4_audit(

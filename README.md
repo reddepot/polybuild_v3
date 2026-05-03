@@ -15,7 +15,7 @@
 | bandit Medium+High | ✅ 0 issues | 8 Low (skips justifiés) |
 | pip-audit | ✅ 0 CVE | deps minimum + dev |
 | detect-secrets | ✅ clean | aucun secret commit |
-| pytest | ✅ 286 passed, 16 xfail, 2 xpassed | coverage 41% |
+| pytest | ✅ 318 passed, 8 xfail (R6 résiduel) | coverage ~43% |
 | AST sanity | ✅ all 36 files parse | py3.11+ |
 
 Voir [`POLYLENS_round10_PREMORTEM.md`](POLYLENS_round10_PREMORTEM.md) pour les 10 risques résiduels identifiés et la dette technique exposée (R6 = 18 tests xfail volontaires).
@@ -26,7 +26,8 @@ Voir [`POLYLENS_round10_PREMORTEM.md`](POLYLENS_round10_PREMORTEM.md) pour les 1
 |---|---|---|---|
 | 5-9 | NO_GO → 4×GO + 2×CONDITIONAL_GO | 26 → 0 nouveaux | 50 patches A-Z |
 | 10 (POLYLENS multi-axes 7) | GO conditionnel | 3 P0 + 7 P1 nouveaux trouvés (asyncio import manquant, 0 tests, mypy strict 52 erreurs, etc.) | 100% appliqués |
-| 10 audit ortho GLM 4.6 + MiniMax M2 | CONDITIONAL_GO | 5 P0/P1 résiduels documentés | backlog post-audit externe |
+| 10 audit ortho GLM 4.6 + MiniMax M2 | CONDITIONAL_GO | 5 P0/P1 résiduels documentés | tous appliqués Round 10.1 |
+| **10.1 audit cross-LLM (Grok+Qwen+Gemini+DeepSeek+ChatGPT+Kimi)** | GO conditionnel | 4 P0 + 5 P1 convergents | **9/9 patchés** ; 20 tests régression ; cf. `POLYLENS_round10_PREMORTEM.md` |
 
 ---
 

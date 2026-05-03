@@ -82,12 +82,28 @@ class GroundingEngine:
         return deps
 
     def _index_local_modules(self) -> set[str]:
-        """All Python file stems in the project (potential top-level imports)."""
-        return {
-            p.stem
-            for p in self.project_root.rglob("*.py")
-            if not p.name.startswith("_") and "__pycache__" not in p.parts
-        }
+        """All importable module/package names in the project.
+
+        Round 10.1 fix [Kimi P0 #3]: the previous implementation only indexed
+        the file *stems* (``models``, ``orchestrator``…). That caused legit
+        qualified imports like ``from polybuild.models import Spec`` to be
+        flagged as hallucinations because the top-level package name
+        ``polybuild`` was not in the set. We now index every directory that
+        contains an ``__init__.py`` AND every leaf module stem, so both
+        ``models`` and ``polybuild.models`` resolve.
+        """
+        modules: set[str] = set()
+        for py_file in self.project_root.rglob("*.py"):
+            if "__pycache__" in py_file.parts:
+                continue
+            if not py_file.name.startswith("_"):
+                modules.add(py_file.stem)
+        # Walk directories that look like Python packages.
+        for init_file in self.project_root.rglob("__init__.py"):
+            if "__pycache__" in init_file.parts:
+                continue
+            modules.add(init_file.parent.name)
+        return modules
 
     def _index_local_symbols(self) -> set[str]:
         """All function/class names defined in the project."""
@@ -209,13 +225,31 @@ class GroundingEngine:
     async def check_directory_async(
         self, code_dir: Path, voice_id: str
     ) -> list[GroundingFinding]:
-        """Async path: each file parse bounded by _AST_PARSE_TIMEOUT_S."""
-        findings: list[GroundingFinding] = []
-        for py_file in code_dir.rglob("*.py"):
-            if "__pycache__" in py_file.parts:
-                continue
-            findings.extend(await self.check_file_async(py_file, voice_id))
-        return findings
+        """Async path: each file parse bounded by _AST_PARSE_TIMEOUT_S.
+
+        Round 10.1 fix [Kimi P1 #10]: previously this loop was sequential.
+        With 50 files x 8s timeout = 400s worst case. We now parallelise
+        through ``asyncio.gather`` capped by a small Semaphore (8) so that
+        a malicious payload trying to exhaust the thread pool can't starve
+        unrelated runs.
+        """
+        files = [
+            p for p in code_dir.rglob("*.py")
+            if "__pycache__" not in p.parts
+        ]
+        if not files:
+            return []
+
+        sem = asyncio.Semaphore(8)
+
+        async def _bounded(p: Path) -> list[GroundingFinding]:
+            async with sem:
+                return await self.check_file_async(p, voice_id)
+
+        results = await asyncio.gather(
+            *(_bounded(p) for p in files), return_exceptions=False
+        )
+        return [f for sub in results for f in sub]
 
 
 # ────────────────────────────────────────────────────────────────

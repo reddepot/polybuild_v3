@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -118,8 +119,15 @@ Hard rules:
   - Interfaces must use Pydantic v2 schemas.
 """
 
-    # We use the raw subprocess invocation directly here because the spec is text,
-    # not a code module on disk.
+    # We use the raw subprocess invocation directly here because the spec is
+    # text, not a code module on disk.
+    # Round 10.1 fix [Kimi P0 #1]: the orchestrator's signal handlers cancel
+    # asyncio tasks on SIGINT/SIGTERM, but without ``start_new_session=True``
+    # the spawned ``claude code`` process stays in the parent's process group.
+    # On macOS/Linux the orchestrator can then call ``os.killpg`` on a
+    # dedicated session id to take down the child *and* its grand-children
+    # (e.g. the auth helper claude-code spawns). On Windows the flag is a
+    # no-op so we gate it on platform.
     proc = await asyncio.create_subprocess_exec(
         "claude", "code",
         "--model", "opus-4.7",
@@ -127,6 +135,7 @@ Hard rules:
         "--output-format", "json",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        start_new_session=(sys.platform != "win32"),
     )
     try:
         stdout, stderr = await asyncio.wait_for(
@@ -260,6 +269,7 @@ Output the COMPLETE revised spec as JSON, same schema as before.
         "--output-format", "json",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        start_new_session=(sys.platform != "win32"),
     )
     try:
         stdout, _ = await asyncio.wait_for(

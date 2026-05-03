@@ -1,0 +1,110 @@
+"""Prompt-context sanitization to defeat injection via AGENTS.md / spec docs.
+
+Round 10 audit (6/6 convergence : Grok / Qwen / Gemini / DeepSeek / ChatGPT /
+Kimi) flagged that the privacy gate scans the raw text of AGENTS.md but the
+content is then injected verbatim into the LLM prompt. HTML/Markdown comments
+are invisible to the regex PII patterns (so they pass the gate) but are
+read by the LLM (which executes their hidden instructions).
+
+This module provides :
+- ``sanitize_prompt_context(raw)`` — strips HTML/Markdown comments, XML
+  processing instructions, zero-width / formatting Unicode, and emits a
+  warning if obvious "ignore previous instructions" patterns are detected.
+- ``contains_suspicious_directive(raw)`` — boolean helper for callers that
+  want to bail out instead of stripping (e.g. paranoia mode).
+
+Both functions are deterministic, side-effect-free (other than logging),
+and fast enough to run on every Phase-1 entry without measurable overhead.
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+
+import structlog
+
+logger = structlog.get_logger()
+
+# ── Public regex patterns (importable for tests) ──────────────────────
+
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+_XML_PI = re.compile(r"<\?.*?\?>", re.DOTALL)
+_HTML_SCRIPT = re.compile(r"<script[^>]*>.*?</script>", re.DOTALL | re.IGNORECASE)
+# Zero-width / control / bidirectional Unicode often used to smuggle text
+# past human review while still being read by the model.
+# Ranges:
+#   U+200B..U+200F  zero-width space, joiner, RTL/LTR mark
+#   U+202A..U+202E  bidi overrides
+#   U+2066..U+2069  isolate controls
+#   U+FEFF          byte-order mark / ZWNBSP
+# Built from explicit code-point escapes so the source file itself
+# stays free of invisible characters (else ruff PLE2502).
+_INVISIBLE_CHARS = re.compile(
+    "[" + chr(0x200B) + "-" + chr(0x200F)
+    + chr(0x202A) + "-" + chr(0x202E)
+    + chr(0x2066) + "-" + chr(0x2069)
+    + chr(0xFEFF)
+    + "]"
+)
+
+_SUSPICIOUS_DIRECTIVES: tuple[str, ...] = (
+    "ignore previous",
+    "ignore all previous",
+    "disregard prior",
+    "disregard previous",
+    "execute instead",
+    "system prompt:",
+    "you are now",
+    "forget the above",
+    "override your instructions",
+)
+
+
+def sanitize_prompt_context(raw: str) -> str:
+    """Strip injection vectors from a free-text context block.
+
+    The cleaning order matters: NFKC first so that homoglyph variants of
+    e.g. ``<!--`` collapse to ASCII before the comment regex runs.
+
+    Args:
+        raw: arbitrary user-supplied text (AGENTS.md, project_ctx, etc.)
+
+    Returns:
+        Cleaned text — empty string if input is empty/None-ish.
+    """
+    if not raw:
+        return ""
+    cleaned = unicodedata.normalize("NFKC", raw)
+    cleaned = _HTML_COMMENT.sub("", cleaned)
+    cleaned = _XML_PI.sub("", cleaned)
+    cleaned = _HTML_SCRIPT.sub("", cleaned)
+    cleaned = _INVISIBLE_CHARS.sub("", cleaned)
+
+    lower = cleaned.lower()
+    for needle in _SUSPICIOUS_DIRECTIVES:
+        if needle in lower:
+            logger.warning(
+                "prompt_context_suspicious_directive_after_sanitize",
+                pattern=needle,
+            )
+
+    return cleaned.strip()
+
+
+def contains_suspicious_directive(raw: str) -> bool:
+    """True if a sanitized version of *raw* still mentions an obvious
+    prompt-injection directive. Useful for paranoia-mode callers that
+    prefer to abort the run rather than ship a cleaned-but-suspicious
+    context to the model.
+    """
+    if not raw:
+        return False
+    cleaned = sanitize_prompt_context(raw).lower()
+    return any(needle in cleaned for needle in _SUSPICIOUS_DIRECTIVES)
+
+
+__all__ = [
+    "contains_suspicious_directive",
+    "sanitize_prompt_context",
+]

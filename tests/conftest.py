@@ -33,28 +33,21 @@ def project_root() -> Path:
 # ──────────────────────────────────────────────────────────────────────
 
 EXPECTED_FAILURES: set[str] = {
-    # tests/unit/test_phase_1_select.py
-    "tests/unit/test_phase_1_select.py::TestDiversityScore::test_fully_orthogonal_five",
-    # tests/unit/test_phase_5_triade.py
-    "tests/unit/test_phase_5_triade.py::TestPickTriade::test_excludes_us_cn_models",
-    "tests/unit/test_phase_5_triade.py::TestParseVerifierVerdict::test_malformed_json_returns_fail",
-    "tests/unit/test_phase_5_triade.py::TestPhase5Dispatch::test_p0_blocked_returns_blocked_p0",
-    "tests/unit/test_phase_5_triade.py::TestPhase5Dispatch::test_p0_capped_at_5",
-    # tests/unit/test_orchestrator.py — Pydantic 2 strict refuses MagicMock
-    "tests/unit/test_orchestrator.py::TestHandleShutdownSignal::test_cancels_other_tasks",
-    "tests/unit/test_orchestrator.py::TestBuildAbortedRun::test_structure",
-    "tests/unit/test_orchestrator.py::TestRunPolybuild::test_privacy_gate_blocks",
+    # Round 10.1 update : 4 tests qui xfail-aient sont devenus green grâce aux
+    # patches convergents (R1, P0 #4, etc.). On garde uniquement les xfail
+    # toujours rouges — chacun documente une zone que l'audit externe doit
+    # encore creuser.
+    #
+    # tests/unit/test_orchestrator.py — async happy-path needs full Phase0+Phase4 mocks
     "tests/unit/test_orchestrator.py::TestRunPolybuild::test_happy_path",
     "tests/unit/test_orchestrator.py::TestRunPolybuild::test_phase5_blocked_p0_returns_aborted",
     "tests/unit/test_orchestrator.py::TestRunPolybuild::test_phase6_validation_failed_returns_aborted",
     "tests/unit/test_orchestrator.py::TestRunPolybuild::test_skip_commit_and_smoke",
-    "tests/unit/test_orchestrator.py::TestRunPolybuild::test_risk_profile_inference_medical_high",
     # tests/unit/test_domain_gates_fts5.py — empty SQLite fixture, all goldens 0 hits
-    "tests/unit/test_domain_gates_fts5.py::TestFTS5Functional::test_all_queries_pass",
     "tests/unit/test_domain_gates_fts5.py::TestFTS5Functional::test_min_hits_failure",
     "tests/unit/test_domain_gates_fts5.py::TestFTS5Functional::test_max_hits_failure",
     "tests/unit/test_domain_gates_fts5.py::TestFTS5Functional::test_empty_query_skipped",
-    # tests/unit/test_domain_gates_mcp.py
+    # tests/unit/test_domain_gates_mcp.py — async timeout mocking complexity
     "tests/unit/test_domain_gates_mcp.py::TestSendJsonrpc::test_timeout_raises",
 }
 

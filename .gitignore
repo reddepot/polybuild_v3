@@ -46,3 +46,4 @@ qdrant_storage/
 # macOS
 .DS_Store
 **/.DS_Store
+.polybuild/

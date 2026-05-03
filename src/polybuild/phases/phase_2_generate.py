@@ -78,10 +78,16 @@ async def phase_2_generate(
         async def _call() -> BuilderResult:
             return await builder.generate(spec, cfg)
 
+        # Round 10.1 fix [Kimi P1 #8]: forward the per-voice timeout to the
+        # limiter as exec_timeout_s. Without this the limiter's default
+        # 1800s ceiling masked the 720s/360s budgets configured in
+        # ``config/timeouts.yaml`` and a stuck CLI could block the run for
+        # 30 min instead of the expected 12.
         return await limiter.run(
             provider_or_voice=provider,
             coro_factory=_call,
             priority=Priority.P0,
+            exec_timeout_s=float(cfg.timeout_sec),
         )
 
     tasks = [_bounded_generate(cfg, builder) for cfg, builder in builders]

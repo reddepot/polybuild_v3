@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -306,7 +307,11 @@ def _normalize_attestation(value: str | None) -> AttestationValue:
     relied on `# type: ignore` and crashed Pydantic if the YAML was malformed
     or if `declared_sensitivity` came from CLI/project_ctx unsanitised.
     """
-    val = str(value or "missing").strip().lower()
+    # Round 10.1 fix [R2]: normalize before lowercasing so fullwidth
+    # variants of attestation tokens (e.g. ``ＳＹＮＴＨＥＴＩＣ``) are
+    # accepted instead of being silently demoted to ``missing``.
+    normalized = unicodedata.normalize("NFKC", str(value or "missing"))
+    val = normalized.strip().lower()
     if val not in _VALID_ATTESTATIONS:
         logger.warning("invalid_attestation_value_normalized_to_missing", value=val)
         return "missing"
@@ -374,7 +379,15 @@ def phase_minus_one_privacy_gate(
     # Round 8 fix [Privacy-AGENTS]: scan the FULL prompt context, not just
     # the brief. AGENTS.md and project_ctx are the most common bypass vectors
     # because they are loaded by adapters AFTER the gate runs.
+    # Round 10.1 fix [R2 — Unicode confusables / homoglyphs] (5/6 conv:
+    # Grok, Qwen, Gemini, DeepSeek, Kimi): the regexes match ASCII digit/
+    # letter ranges only. A NIR encoded with mathematical bold digits
+    # (U+1D7CE-D7) or an email with fullwidth ``＠`` (U+FF20) bypassed the
+    # gate. NFKC normalization collapses those variants to their canonical
+    # ASCII equivalents before any regex runs.
+    text = unicodedata.normalize("NFKC", text)
     if additional_context:
+        additional_context = unicodedata.normalize("NFKC", additional_context)
         # Use a sentinel to keep the layers' regexes from matching across the
         # boundary (e.g. a phone number cut between brief and AGENTS.md).
         full_text = text + "\n<--POLYBUILD-PRIVACY-BOUNDARY-->\n" + additional_context

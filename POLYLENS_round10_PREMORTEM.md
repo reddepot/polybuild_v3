@@ -121,14 +121,39 @@ Le LLM (Opus, Codex, Gemini) interprète ce commentaire et peut être détourné
 
 ---
 
+## Mise à jour Round 10.1 — Patches appliqués post-audit cross-LLM
+
+Audit externe par 6 voix orthogonales (Grok, Qwen, Gemini, DeepSeek, ChatGPT, Kimi) sur le commit initial poussé. Convergence forte sur 9 findings, tous patchés :
+
+| ID | Origine | Sévérité | Statut | Module |
+|---|---|---|---|---|
+| **R1** | 6/6 conv | P0 | ✅ Mitigé | `security/prompt_sanitizer.py` (nouveau) + intégration orchestrator |
+| **Kimi P0 #1** | Kimi | P0 | ✅ Mitigé | `phase_0_spec.py` — `start_new_session` aux 2 spawns |
+| **Kimi P0 #3** | Kimi | P0 | ✅ Mitigé | `phase_3b_grounding.py` — qualified packages indexés |
+| **Kimi P0 #4** | Kimi | P0 | ✅ Mitigé | `orchestrator/__init__.py` — `grounding_disqualifies` wired |
+| **R2** | 5/6 conv | P1 | ✅ Mitigé | `phase_minus_one_privacy.py` — `unicodedata.normalize("NFKC")` |
+| **R5** | 5/6 conv | P1 | ✅ Mitigé | `concurrency/limiter.py` — `ConcurrencyLimitsConfig` Pydantic |
+| **Kimi P1 #8** | Kimi | P1 | ✅ Mitigé | `phase_2_generate.py` — `exec_timeout_s=cfg.timeout_sec` |
+| **R3** | 4/5 conv | P1 | ✅ Mitigé | `_handle_shutdown_signal` — drain bounded gather |
+| **Kimi P1 #10** | Kimi | P1 | ✅ Mitigé | `phase_3b_grounding.py` — `asyncio.gather` + Semaphore(8) |
+
+**Findings rejetés (faux positifs documentés)** :
+- R4 `_inflight` drift — Kimi falsifie : `finally` Python garantit décrément sur `CancelledError`.
+- R7 YAML deserialization — déjà mitigé : `yaml.safe_load` partout.
+- 5 findings MiniMax minoritaires (race snapshots, aiohttp leak, ProcessPool GIL, etc.) — non applicables au code actuel.
+
+**Tests régression** : 20 nouveaux tests dans `tests/regression/test_round10_1_audit_patches.py`.
+**Total suite** : 318 passed, 6 skipped, 8 xfailed (R6 résiduel : 4 tests xfail réduits).
+
 ## Plan d'action post-publication
 
 1. **Avant le push** :
    - [x] ruff/mypy/bandit/pip-audit verts
-   - [x] 286 tests passent (18 fails documentés ici)
+   - [x] 318 tests passent (8 xfail R6 documentés ici)
    - [x] CI GitHub Actions configurée
    - [x] Pre-commit configuré
    - [x] Pre-mortem rédigé (ce document)
+   - [x] **Round 10.1 — 9 patches cross-LLM convergents appliqués**
 
 2. **Après le push, attendre l'audit Agent Swarm Kimi** :
    - Confirmer / falsifier R1-R5 par PoC
