@@ -49,12 +49,16 @@ class TestSafeWriteHelperExists:
         from polybuild.security.safe_write import write_files_to_worktree
         worktree = tmp_path / "wt"
         worktree.mkdir()
-        # Try to write outside the worktree via absolute path
+        # Round 10.8 POLYLENS [Codex C_tests-01 P2]: previous version
+        # used ``assert ... or True`` which always passes. Replace with
+        # an absolute path under tmp_path so the assertion is real and
+        # filesystem state can be verified.
+        outside = tmp_path / "outside_evil.txt"
         n = write_files_to_worktree(
-            {"/tmp/evil": "x"}, worktree, adapter_name="test"
+            {str(outside): "x"}, worktree, adapter_name="test"
         )
         assert n == 0, "absolute path must be blocked"
-        assert not (Path("/tmp/evil")).exists() or True  # don't assert filesystem state
+        assert not outside.exists(), "blocked write must not create the file"
 
     def test_helper_blocks_traversal(self, tmp_path: Path) -> None:
         from polybuild.security.safe_write import write_files_to_worktree

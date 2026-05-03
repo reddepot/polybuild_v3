@@ -1,6 +1,6 @@
 # POLYBUILD v3 — Production Runbook
 
-État au commit `e7f3d86` après Round 10.8 (audit externe 5 voix consolidé).
+État au commit `2b3c12f` après Round 10.8 prod-launch sprint (codex/claude file extraction + Phase 3 fix + voix chinoises + skill /polybuild + 6 bugs runtime fixés via smoke #4→#9).
 
 ## Décision : lancement progressif en 3 phases
 
@@ -19,7 +19,7 @@ for cli in claude codex gemini kimi; do
 done
 
 # 3. Polybuild installable
-cd /Users/radu/Downloads/polybuild_v3-2
+cd /Users/radu/Developer/projects/polybuild_v3
 uv pip install -e . 2>&1 | tail -3
 
 # 4. Smoke import du package
@@ -54,7 +54,7 @@ EOF
 # Profil le plus simple, dry run
 export OPENROUTER_API_KEY=$(grep ^OPENROUTER_API_KEY /Users/radu/Developer/projects/mcp_redapi/.env | cut -d= -f2)
 
-cd /Users/radu/Downloads/polybuild_v3-2
+cd /Users/radu/Developer/projects/polybuild_v3
 uv run polybuild run \
   --brief /tmp/polybuild_smoke/brief.md \
   --profile helia_algo \

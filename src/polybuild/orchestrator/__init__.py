@@ -713,7 +713,12 @@ async def _run_polybuild_inner(
         duration_total_sec=(datetime.now(UTC) - started_at).total_seconds(),
         tokens=TokenUsage(),  # TODO: aggregate from adapters
         cost_eur_marginal=0.0,  # TODO: compute from usage
-        final_status="committed",
+        # Round 10.8 POLYLENS [Codex B_quality-02 P2]: with ``skip_commit=True``
+        # Phase 7 is bypassed but final_status used to stay ``committed``
+        # nonetheless — confusing CLI summary, corrupting postmortem
+        # data and making the dry-run/smoke distinction invisible.
+        # Default to ``validated`` until Phase 7 actually commits.
+        final_status="validated" if skip_commit else "committed",
         commit_sha=None,
         started_at=started_at,
         completed_at=None,

@@ -269,9 +269,12 @@ class TestClaudeCodeParseOutput:
         (worktree / "src").mkdir()
         (worktree / "tests").mkdir()
 
+        # Round 10.8 POLYLENS [Codex C_tests-01 P2]: use a tmp-scoped
+        # absolute path so we can really assert it was NOT written.
+        outside = tmp_path / "outside_evil.txt"
         payload = {
             "files": {
-                "/etc/passwd": "root:x:0:0",
+                str(outside): "should never land here",
                 "src/ok.py": "ok",
             },
             "self_metrics": {},
@@ -280,7 +283,9 @@ class TestClaudeCodeParseOutput:
         result = adapter._parse_output(raw, worktree, _make_cfg(), 1.0)
 
         assert result.status == Status.OK
-        assert not (Path("/etc/passwd")).exists() or True  # don't assert fs state
+        assert not outside.exists(), (
+            "absolute path outside worktree must be blocked by safe_write"
+        )
         assert (worktree / "src" / "ok.py").exists()
 
     def test_fallback_estimate_metrics_when_self_metrics_absent(self, tmp_path: Path) -> None:

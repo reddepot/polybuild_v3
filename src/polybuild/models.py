@@ -354,7 +354,11 @@ class PolybuildRun(BaseModel):
     duration_total_sec: float
     tokens: TokenUsage
     cost_eur_marginal: float = 0.0
-    final_status: Literal["committed", "aborted", "rolled_back"]
+    # Round 10.8 POLYLENS [Codex B_quality-02 P2]: ``validated`` for
+    # dry-runs (--no-commit) where Phase 7 is bypassed but the pipeline
+    # ran successfully through Phase 6. Distinguishes from ``committed``
+    # (Phase 7 wrote the commit) and ``aborted`` (something failed).
+    final_status: Literal["committed", "validated", "aborted", "rolled_back"]
     commit_sha: str | None = None
     started_at: datetime
     completed_at: datetime | None = None

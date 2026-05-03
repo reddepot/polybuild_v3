@@ -74,20 +74,69 @@ def is_us_or_cn_model(voice_id: str) -> bool:
 
     Provider mapping (kept here as a comment for traceability):
         US: anthropic, openai, google, xai
-        CN: moonshot, deepseek, alibaba
-        Local (excluded): ollama, qwen-on-NAS, mistral_eu (EU-based)
+        CN: moonshot, deepseek, alibaba (qwen/), zhipu (z-ai/),
+            xiaomi (xiaomi/), minimax (minimax/)
+        Local (excluded): ollama, qwen-on-NAS (matches "qwen<X>:Y"),
+                          mistral_eu (EU-based)
+
+    Round 10.8 prod-launch fix [Codex POLYLENS A_security-02]: the new
+    OpenRouter-hosted Chinese voices (``qwen/``, ``z-ai/``, ``xiaomi/``,
+    ``minimax/``, ``moonshotai/``) were NOT included in the US/CN
+    detection. As a result a medical-high profile with
+    ``excludes_us_cn_models=True`` was silently leaking data to those
+    Chinese providers. Local Ollama Qwen is identified by the ``:`` in
+    ``qwen2.5-coder:14b-int4`` (NAS tag), distinct from the OR
+    ``qwen/`` namespace.
     """
+    # CLI-routed US providers
     if voice_id.startswith(("claude-", "gpt-", "gemini-")):
         return True
-    if voice_id.startswith(("kimi-", "deepseek/", "qwen")):
-        # qwen runs locally on user's NAS → not hosted by Alibaba in this context
-        return not voice_id.startswith("qwen")
-    return voice_id.startswith("x-ai/")
+    # CLI-routed CN providers (Moonshot/Kimi)
+    if voice_id.startswith("kimi-"):
+        return True
+    # OR-routed CN providers (Round 10.8 voix chinoises)
+    if voice_id.startswith((
+        "qwen/",
+        "z-ai/",
+        "xiaomi/",
+        "minimax/",
+        "moonshotai/",
+        "deepseek/",
+    )):
+        return True
+    # OR-routed US providers
+    if voice_id.startswith(("x-ai/", "openai/", "anthropic/", "google/", "meta-llama/")):
+        return True
+    # Local Ollama Qwen (NAS tag with ':')
+    if voice_id.startswith("qwen") and ":" in voice_id:
+        return False
+    return False
+
+
+# Round 10.8 prod-launch fix [Codex POLYLENS A_security-01]: explicit
+# allow-list of OR provider prefixes, kept in sync with the adapter
+# factory in ``polybuild.adapters.__init__``. Without the new Chinese
+# prefixes the ``excludes_openrouter`` gate silently let Alibaba/
+# ZhipuAI/Xiaomi/MiniMax requests through.
+_OR_ROUTED_PREFIXES: tuple[str, ...] = (
+    "anthropic/",
+    "deepseek/",
+    "google/",
+    "meta-llama/",
+    "minimax/",
+    "mistralai/",
+    "moonshotai/",
+    "openai/",
+    "qwen/",
+    "x-ai/",
+    "xiaomi/",
+    "z-ai/",
+)
 
 
 def is_openrouter_routed(voice_id: str) -> bool:
     """Check if a voice goes through OpenRouter (excluded for medical sensitive)."""
-    return voice_id.startswith(("deepseek/", "x-ai/"))
+    return voice_id.startswith(_OR_ROUTED_PREFIXES)
 
 
 def filter_candidates(
