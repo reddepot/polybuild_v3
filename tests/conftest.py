@@ -53,6 +53,12 @@ EXPECTED_FAILURES: set[str] = {
     # whole report instead of silently demoting findings to P1. The
     # original test asserted the old "cap at 5 + downgrade" semantic.
     "tests/unit/test_phase_5_triade.py::TestPhase5Dispatch::test_p0_capped_at_5",
+    # Round 10.8 POLYLENS [Gemini GEMINI-01 P0]: the Round 10.4 'lost
+    # deletions' patch caused massive data-loss (deleted entire repo on
+    # every incremental Phase 7 commit). The patch was REMOVED entirely
+    # in commit 9a06e13. The test that asserted the old behaviour is
+    # now obsolete — kept as xfail to document the regression history.
+    "tests/regression/test_round10_4_audit_patches.py::TestPhase7StagesDeletions::test_git_rm_for_missing_paths",
 }
 
 
