@@ -208,6 +208,27 @@ class TestJsonExtractHelperExists:
         from polybuild.adapters._json_extract import _try_parse_json
         assert _try_parse_json("just prose, no JSON here") is None
 
+    def test_string_aware_brace_counter_handles_quoted_brace(self) -> None:
+        # Round 10.8 POLYLENS [Qwen F1 + Kimi B-01, 2/4 voix] : la
+        # stratégie 3 ne doit pas confondre un ``}`` à l'intérieur d'une
+        # string avec le brace fermant. Sans le compteur string-aware,
+        # ``rindex('}')`` retournait le ``}`` interne et json.loads
+        # échouait → fallback returned None.
+        from polybuild.adapters._json_extract import _try_parse_json
+        # NOTE : the inner string contains `}` which would trip a naive
+        # brace scan. With the string-aware counter the outer `}` is
+        # correctly identified as the block terminator.
+        raw = 'prose {"msg": "ok}not"} more text'
+        out = _try_parse_json(raw)
+        assert out == {"msg": "ok}not"}
+
+    def test_picks_largest_valid_block_when_multiple(self) -> None:
+        from polybuild.adapters._json_extract import _try_parse_json
+        # The valid larger block (2 keys) must win over the small {a:1}.
+        raw = 'first {"a": 1} second prose {"x": "y", "z": [1,2,3]}'
+        out = _try_parse_json(raw)
+        assert out == {"x": "y", "z": [1, 2, 3]}
+
 
 class TestCodexCliFileExtraction:
     def test_uses_try_parse_json_and_safe_write(self) -> None:
