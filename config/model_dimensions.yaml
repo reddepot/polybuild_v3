@@ -102,6 +102,62 @@ x-ai/grok-4.20:
   role_bias: skeptic
 
 # ────────────────────────────────────────────────────────────────
+# VOIX CHINOISES via OpenRouter (Round 10.8 — POLYLENS [Codex E_arch-01])
+# Ajoutées au model_dimensions pour que la matrice de diversité
+# Phase 1 puisse les sélectionner correctement sur axe corpus_proxy
+# (chinese_*) — corpus orthogonal aux modèles occidentaux.
+# ────────────────────────────────────────────────────────────────
+
+z-ai/glm-5.1:
+  provider: zhipu
+  architecture: moe
+  alignment: thinking_heavy
+  corpus_proxy: zhipu_corpus
+  role_bias: reasoner_chinese
+
+z-ai/glm-4.6:
+  provider: zhipu
+  architecture: moe
+  alignment: balanced
+  corpus_proxy: zhipu_corpus
+  role_bias: code_diversity_cn
+
+qwen/qwen3.6-max-preview:
+  provider: alibaba
+  architecture: moe
+  alignment: code_math_focused
+  corpus_proxy: alibaba_corpus
+  role_bias: code_alternative_cn
+
+qwen/qwen3.6-coder:
+  provider: alibaba
+  architecture: moe
+  alignment: code_specialist
+  corpus_proxy: alibaba_corpus
+  role_bias: code_focus_cn
+
+moonshotai/kimi-k2.6:
+  provider: moonshot
+  architecture: moe
+  alignment: long_context
+  corpus_proxy: moonshot_corpus
+  role_bias: long_context_audit
+
+minimax/minimax-m2.7:
+  provider: minimax
+  architecture: moe
+  alignment: fast
+  corpus_proxy: minimax_corpus
+  role_bias: code_alternative_cn
+
+xiaomi/mimo-v2.5-pro:
+  provider: xiaomi
+  architecture: moe
+  alignment: thinking_heavy
+  corpus_proxy: xiaomi_corpus
+  role_bias: reasoner_chinese
+
+# ────────────────────────────────────────────────────────────────
 # MISTRAL EU
 # ────────────────────────────────────────────────────────────────
 
