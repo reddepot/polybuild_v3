@@ -1,0 +1,157 @@
+{
+  "auditor": "gemini-3.1-pro-preview",
+  "commit_audited": "946ae6d",
+  "honeypots": {
+    "H1": false,
+    "H2": false,
+    "H3": true,
+    "H4": true,
+    "H5": true
+  },
+  "axes_covered": [
+    "A_security",
+    "B_quality",
+    "C_tests",
+    "D_performance",
+    "E_architecture"
+  ],
+  "validates_4_voice_fixes": "REGRESSIONS_DETECTED",
+  "findings": [
+    {
+      "id": "GEMINI-01",
+      "axis": "B_quality",
+      "severity": "P0",
+      "file": "src/polybuild/phases/phase_7_commit.py",
+      "lines": "315-339",
+      "title": "Massive code deletion (Data Loss) caused by 'lost deletions' patch",
+      "evidence": "deletions = [p for p in tracked_paths if p not in staged_rel]\nif deletions:\n    await _git(\"rm\", ...)",
+      "impact": "The Round 10.4 ChatGPT patch assumes the LLM outputs the *entire* scope (e.g. all of `src/` and `tests/`). Since adapters instruct the model to only output the specific module requested, `staged_rel` only contains the newly generated files. The logic then identifies ALL other pre-existing project files under `src/` and `tests/` as 'lost deletions' and deletes them via `git rm`, catastrophically wiping the existing codebase.",
+      "missed_by": [
+        "codex",
+        "kimi",
+        "qwen",
+        "grok"
+      ],
+      "remediation": "- deletions = [p for p in tracked_paths if p not in staged_rel]\n+ # Compare explicitly against files the LLM actively touched/modified, or drop the logic completely if worktree states are partial.",
+      "confidence": 1.0
+    },
+    {
+      "id": "GEMINI-02",
+      "axis": "A_security",
+      "severity": "P0",
+      "file": "src/polybuild/orchestrator/__init__.py",
+      "lines": "574-577",
+      "title": "Phase 8 SSRF filter bypassed by non-standard IP encodings",
+      "evidence": "host = (parsed.hostname or \"\").lower()\nis_local = host in {\"localhost\", \"127.0.0.1\", \"::1\"} or host.startswith(\"169.254.\")",
+      "impact": "An attacker manipulating `project_ctx.phase_8_endpoint` can use decimal, hex, or octal representations of IP addresses (e.g., `2852039166` for `169.254.169.254`). Python's `urlparse` does not normalize these to dotted-quad. The naive string comparison fails to flag it as local, bypassing `POLYBUILD_PHASE_8_ALLOW_LOCAL` and enabling SSRF against cloud IMDS metadata endpoints.",
+      "missed_by": [
+        "codex",
+        "kimi",
+        "qwen",
+        "grok"
+      ],
+      "remediation": "+ import ipaddress\n+ ip = ipaddress.ip_address(host)\n+ is_local = ip.is_loopback or ip.is_link_local",
+      "confidence": 1.0
+    },
+    {
+      "id": "GEMINI-03",
+      "axis": "A_security",
+      "severity": "P1",
+      "file": "src/polybuild/phases/phase_1_select.py",
+      "lines": "104-108",
+      "title": "Alibaba/OpenRouter Qwen models bypass US/CN exclusion via broad condition",
+      "evidence": "if risk_profile.excludes_us_cn_models:\n    filtered = [v for v in filtered if not is_us_or_cn_model(v) or v.startswith(\"qwen\")]",
+      "impact": "The hard override intended to permit local Ollama NAS Qwen instances (`qwen...:14b-int4`) is too broad (`v.startswith(\"qwen\")`). It inadvertently matches Chinese OpenRouter models like `qwen/qwen-max`. For paranoid/medical profiles that exclude US/CN models, this bug silently routes sensitive data to Chinese providers via OpenRouter.",
+      "missed_by": [
+        "codex",
+        "kimi",
+        "qwen",
+        "grok"
+      ],
+      "remediation": "- if not is_us_or_cn_model(v) or v.startswith(\"qwen\"):\n+ if not is_us_or_cn_model(v) or (v.startswith(\"qwen\") and \":\" in v):",
+      "confidence": 1.0
+    },
+    {
+      "id": "GEMINI-04",
+      "axis": "A_security",
+      "severity": "P1",
+      "file": "src/polybuild/security/prompt_sanitizer.py",
+      "lines": "85-93",
+      "title": "Suspicious directives in prompt context are logged but NOT stripped",
+      "evidence": "for needle in _SUSPICIOUS_DIRECTIVES:\n    if needle in lower:\n        logger.warning(...)\nreturn cleaned.strip()",
+      "impact": "When prompt injection payloads like 'ignore previous instructions' are found in `AGENTS.md` or `project_ctx`, the orchestrator successfully detects them and logs a warning. However, the malicious payload is NOT removed. `sanitize_prompt_context` returns the intact payload, which is then blindly injected into the LLM prompt.",
+      "missed_by": [
+        "codex",
+        "kimi",
+        "qwen",
+        "grok"
+      ],
+      "remediation": "+ if needle in lower:\n+     logger.warning(...)\n+     return \"\" # Or explicitly raise an exception",
+      "confidence": 1.0
+    },
+    {
+      "id": "GEMINI-05",
+      "axis": "A_security",
+      "severity": "P1",
+      "file": "src/polybuild/security/prompt_sanitizer.py",
+      "lines": "70-77",
+      "title": "Fixed-depth sanitization loop allows adversarial nested payloads",
+      "evidence": "for _ in range(8):\n    before = cleaned\n    cleaned = _HTML_COMMENT.sub(\"\", cleaned)",
+      "impact": "The prompt sanitization loop runs for a maximum of 8 iterations. An attacker can bypass HTML comment stripping simply by nesting the tags 9 times (e.g., `<!--<!--...-->-->`). The loop terminates early, leaving the innermost `<!-- payload -->` fully intact.",
+      "missed_by": [
+        "codex",
+        "kimi",
+        "qwen",
+        "grok"
+      ],
+      "remediation": "- for _ in range(8):\n+ while True:\n+     # Add a fail-safe exception after 1000 iterations to prevent DoS",
+      "confidence": 1.0
+    },
+    {
+      "id": "GEMINI-06",
+      "axis": "D_performance",
+      "severity": "P2",
+      "file": "src/polybuild/orchestrator/__init__.py",
+      "lines": "153-176",
+      "title": "Blocking synchronous I/O in main asyncio event loop via save_checkpoint",
+      "evidence": "def save_checkpoint(...):\n    tmp.write_text(json.dumps(...))\n    shutil.copy2(tmp, target_tmp)",
+      "impact": "The orchestrator writes massive JSON checkpoints directly on the main event loop thread without `await`. In high-concurrency configurations, dumping these payloads and performing cross-device OS replaces stalls the cooperative loop, delaying task cancellation, graceful shutdowns, and concurrent generation streams.",
+      "missed_by": [
+        "codex",
+        "kimi",
+        "qwen",
+        "grok"
+      ],
+      "remediation": "- save_checkpoint(run_id, \"phase0\", ...)\n+ await asyncio.to_thread(save_checkpoint, run_id, \"phase0\", ...)",
+      "confidence": 0.95
+    }
+  ],
+  "backlog_priority_advice": [
+    {
+      "item": "Phase 7 'lost deletions' patch (GEMINI-01)",
+      "priority": "high",
+      "rationale": "CRITICAL. The codebase will be irrecoverably wiped out after the first incremental Phase 7 commit. Immediate revert or fix is mandatory."
+    },
+    {
+      "item": "Phase 8 SSRF filter bypass via decimal IPs (GEMINI-02)",
+      "priority": "high",
+      "rationale": "Permits trivial SSRF attacks on sensitive cloud metadata (IMDS). A 10-second patch via ipaddress is required before deploying to AWS/GCP."
+    },
+    {
+      "item": "Kimi yolo immutable mode (Grok/Kimi)",
+      "priority": "medium",
+      "rationale": "Crucial structural defense against autonomous LLM tampering, effectively closing file-system scope breaches before they mutate critical sidecars (like SQLite WAL/DBs)."
+    },
+    {
+      "item": "Status.OK on malformed JSON (Codex B_quality-01)",
+      "priority": "low",
+      "rationale": "While technically a contract violation, keeping it 'défensive' avoids breaking the Kimi-CLI which legitimately occasionally fails structured JSON validation while still writing valid worktree source code."
+    }
+  ],
+  "false_positives_avoided": [
+    "safe_write.py's (worktree / rel_path).resolve() followed by is_relative_to() correctly neutralizes absolute path assignments overriding the worktree, avoiding a false-positive path traversal flag.",
+    "is_symlink() execution order in phase_7_commit.py is correctly placed BEFORE is_file(), properly neutralizing symlink exfiltration."
+  ],
+  "verdict_global": "CRITICAL",
+  "confidence_global": 0.95
+}
