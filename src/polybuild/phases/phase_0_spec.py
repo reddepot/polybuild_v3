@@ -138,10 +138,15 @@ Hard rules:
     # spec the LLM emits). ``json`` output-format wraps in an envelope
     # with ``{result, usage, ...}``, which would break ``json.loads(raw)``
     # here.
+    # Round 10.8 prod-launch fix: explicit ``stdin=DEVNULL`` so claude
+    # CLI v2 doesn't block on inherited stdin (e.g. when polybuild was
+    # launched through ``tee`` or another pipe — claude reads stdin
+    # under ``-p`` until EOF and would hang indefinitely).
     proc = await asyncio.create_subprocess_exec(
         "claude", "-p", prompt,
         "--model", "claude-opus-4-7",
         "--output-format", "text",
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=(sys.platform != "win32"),
@@ -295,10 +300,15 @@ Output the COMPLETE revised spec as JSON, same schema as before.
     # spec the LLM emits). ``json`` output-format wraps in an envelope
     # with ``{result, usage, ...}``, which would break ``json.loads(raw)``
     # here.
+    # Round 10.8 prod-launch fix: explicit ``stdin=DEVNULL`` so claude
+    # CLI v2 doesn't block on inherited stdin (e.g. when polybuild was
+    # launched through ``tee`` or another pipe — claude reads stdin
+    # under ``-p`` until EOF and would hang indefinitely).
     proc = await asyncio.create_subprocess_exec(
         "claude", "-p", prompt,
         "--model", "claude-opus-4-7",
         "--output-format", "text",
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=(sys.platform != "win32"),

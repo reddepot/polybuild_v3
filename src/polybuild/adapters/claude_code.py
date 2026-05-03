@@ -59,6 +59,7 @@ class ClaudeCodeAdapter(BuilderProtocol):
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=worktree,
@@ -140,6 +141,7 @@ class ClaudeCodeAdapter(BuilderProtocol):
                 "-p", smoke_prompt,
                 "--model", self.model,
                 "--output-format", "text",
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=(sys.platform != "win32"),
@@ -162,6 +164,7 @@ class ClaudeCodeAdapter(BuilderProtocol):
             proc = await asyncio.create_subprocess_exec(
                 self.cli_binary,
                 "--version",
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=(sys.platform != "win32"),

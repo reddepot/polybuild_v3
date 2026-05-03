@@ -119,6 +119,7 @@ async def _git(*args: str, cwd: Path = Path()) -> tuple[int, str, str]:
     env = {**_os.environ, **_GIT_ISOLATED_ENV}
     proc = await asyncio.create_subprocess_exec(
         "git", *args,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
@@ -198,6 +199,7 @@ Accepted / Proposed / Deprecated
         proc = await asyncio.create_subprocess_exec(
             "claude", "-p", prompt,
             "--model", "claude-opus-4-7",
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=(sys.platform != "win32"),

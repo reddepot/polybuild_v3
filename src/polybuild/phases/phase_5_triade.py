@@ -274,7 +274,10 @@ _PROMPTS_DIR = _resolve_prompts_dir()
 # functionally at format-time.
 _REQUIRED_PROMPT_PLACEHOLDERS: dict[str, set[str]] = {
     "critic": {"finding_id"},
-    "fixer": {"finding_id"},
+    # Round 10.8 prod-launch fix: prompts/fixer.md uses {workdir} too —
+    # add it to the required placeholder set so a tampered template
+    # missing either {finding_id} OR {workdir} is rejected loudly.
+    "fixer": {"finding_id", "workdir"},
     "verifier_strict": {"finding_id"},
 }
 
@@ -700,8 +703,14 @@ async def _triade_p0(
         # the FIXER prompt also re-injects ``finding.evidence.file`` —
         # which is auditor-controlled (LLM output). Same sanitization
         # treatment as the Critic prompt.
+        # Round 10.8 prod-launch fix: prompts/fixer.md uses ``{workdir}``
+        # placeholder ("Tu éditeS le code in-place dans le worktree
+        # ``{workdir}``"). The format() call must provide it or KeyError
+        # crashes Phase 5. ``winner.code_dir.parent`` is the worktree
+        # root the fixer is allowed to mutate.
         fixer_prompt = fixer_template.format(
             finding_id=finding.id,
+            workdir=str(winner.code_dir.parent.resolve()),
             critic_analysis=sanitize_prompt_context(critic_output[:4000]),
             previous_verdict=fixer_feedback or "(first attempt)",
             evidence_path=sanitize_prompt_context(
@@ -934,8 +943,11 @@ async def _triade_p1_batch(
     # Round 10.3 fix: P1 batch path is fed by both critic_batch_output
     # (LLM-controlled) and findings_block (LLM-controlled via auditor).
     # Sanitize the assembled critic_analysis before .format().
+    # Round 10.8 prod-launch fix: provide ``{workdir}`` to satisfy the
+    # fixer.md template (otherwise KeyError on .format()).
     fixer_prompt = fixer_template.format(
         finding_id=f"P1_BATCH_{axis}",
+        workdir=str(winner.code_dir.parent.resolve()),
         critic_analysis=sanitize_prompt_context(
             f"Batch of {len(findings)} P1 findings on axis '{axis}'.\n"
             f"Critic group review: {critic_batch_output[:1500]}\n\n"

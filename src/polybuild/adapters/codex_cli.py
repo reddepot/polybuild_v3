@@ -85,6 +85,7 @@ class CodexCLIAdapter(BuilderProtocol):
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=worktree,
@@ -123,6 +124,7 @@ class CodexCLIAdapter(BuilderProtocol):
                 "--skip-git-repo-check",
                 "--",
                 smoke,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=(sys.platform != "win32"),
@@ -141,6 +143,7 @@ class CodexCLIAdapter(BuilderProtocol):
         try:
             proc = await asyncio.create_subprocess_exec(
                 self.cli_binary, "--version",
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=(sys.platform != "win32"),
