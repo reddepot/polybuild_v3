@@ -62,7 +62,19 @@ class TestIsUSOrCNModel:
             ("deepseek/deepseek-v4-pro", True),
             ("x-ai/grok-4.20", True),
             ("mistral/devstral-2", False),
-            ("qwen2.5-coder:14b-int4", False),  # local
+            ("qwen2.5-coder:14b-int4", False),  # local NAS Ollama
+            # Round 10.8 POLYLENS [Codex A_security-02 P1] : voix
+            # chinoises via OR — TOUTES doivent renvoyer True pour
+            # que ``excludes_us_cn_models=True`` les exclue.
+            ("qwen/qwen3.6-max-preview", True),
+            ("qwen/qwen3.6-coder", True),
+            ("z-ai/glm-5.1", True),
+            ("z-ai/glm-4.6", True),
+            ("moonshotai/kimi-k2.6", True),
+            ("minimax/minimax-m2.7", True),
+            ("xiaomi/mimo-v2.5-pro", True),
+            # Mistral EU = NOT US/CN
+            ("mistralai/mistral-large", False),  # actually OR-routed but EU provider
         ],
     )
     def test_us_or_cn(self, voice_id: str, expected: bool) -> None:
@@ -76,8 +88,16 @@ class TestIsOpenrouterRouted:
             ("deepseek/deepseek-v4-pro", True),
             ("x-ai/grok-4.20", True),
             ("claude-opus-4.7", False),
-            ("mistral/devstral-2", False),
-            ("qwen2.5-coder:14b-int4", False),
+            ("mistral/devstral-2", False),  # Mistral EU direct, NOT OR
+            ("qwen2.5-coder:14b-int4", False),  # local Ollama
+            # Round 10.8 POLYLENS [Codex A_security-01 P1] : new OR
+            # provider prefixes must ALL be detected.
+            ("qwen/qwen3.6-max-preview", True),
+            ("z-ai/glm-5.1", True),
+            ("moonshotai/kimi-k2.6", True),
+            ("minimax/minimax-m2.7", True),
+            ("xiaomi/mimo-v2.5-pro", True),
+            ("mistralai/mistral-large", True),
         ],
     )
     def test_openrouter(self, voice_id: str, expected: bool) -> None:
