@@ -50,6 +50,54 @@ logger = structlog.get_logger()
 _SHUTDOWN_DRAIN_TASKS: list[asyncio.Task[None]] = []
 
 
+def _resolve_config_root() -> Path:
+    """Locate ``config/`` in editable, wheel and CI installs.
+
+    Round 10.3 fix [ChatGPT RX-301-03 P0]: previous resolution
+    ``Path(__file__).parent.parent.parent / "config"`` lands in
+    ``src/config`` because the file lives at
+    ``src/polybuild/orchestrator/__init__.py`` — the third ``.parent``
+    stops at ``src/``. The repo's actual ``config/`` is one level up.
+    A run with the wrong root either crashed at YAML load or silently
+    used embedded defaults, masking config drift.
+
+    Resolution order:
+      1. ``POLYBUILD_CONFIG_ROOT`` env var (explicit override).
+      2. Walk up from this file looking for ``config/routing.yaml``.
+      3. Look next to the installed ``polybuild`` package.
+    Raises if none of the above point at a directory containing the
+    required ``routing.yaml``.
+    """
+    import os
+
+    env_dir = os.environ.get("POLYBUILD_CONFIG_ROOT")
+    if env_dir:
+        candidate = Path(env_dir)
+        if (candidate / "routing.yaml").exists():
+            return candidate
+
+    for ancestor in Path(__file__).resolve().parents:
+        candidate = ancestor / "config"
+        if (candidate / "routing.yaml").exists():
+            return candidate
+
+    try:
+        import polybuild as _pkg
+
+        pkg_root = Path(_pkg.__file__).parent
+        candidate = pkg_root.parent / "config"
+        if (candidate / "routing.yaml").exists():
+            return candidate
+    except ImportError:
+        pass
+
+    raise RuntimeError(
+        "config_root_not_found: no ``config/routing.yaml`` found via "
+        "POLYBUILD_CONFIG_ROOT, source-tree ancestors, or wheel install. "
+        "Set POLYBUILD_CONFIG_ROOT or ensure config/ ships with the package."
+    )
+
+
 def _handle_shutdown_signal(sig: int, run_id: str) -> None:
     """Round 9 [SIGINT]: react to Ctrl+C / SIGTERM by cancelling all asyncio
     tasks of the current run. The orchestrator's outer `finally:` block then
@@ -415,7 +463,7 @@ async def _run_polybuild_inner(
     save_checkpoint(run_id, "phase0", spec.model_dump(mode="json"), project_root)
 
     # ── Phase 1: voice selection ──
-    voices = await select_voices(spec, config_root=Path(__file__).parent.parent.parent / "config")
+    voices = await select_voices(spec, config_root=_resolve_config_root())
     save_checkpoint(
         run_id, "phase1",
         {"voices": [v.model_dump() for v in voices]},
@@ -491,7 +539,7 @@ async def _run_polybuild_inner(
         winner_result,
         profile_id,
         risk_profile,
-        config_root=Path(__file__).parent.parent.parent / "config",
+        config_root=_resolve_config_root(),
     )
     save_checkpoint(run_id, "phase4", audit.model_dump(mode="json"), project_root)
 

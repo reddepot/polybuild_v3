@@ -240,9 +240,34 @@ async def phase_7_commit(
         # winner_result.code_dir is the per-voice worktree under
         # .polybuild/runs/{run_id}/worktrees/{voice_id}/. We mirror it
         # into project_root and add only those paths.
+        # Round 10.3 fix [ChatGPT RX-301-04 P0 — validated artefact ≠
+        # committed artefact]: ``winner_result.code_dir`` is set to either
+        # ``worktree`` or ``worktree/src`` depending on the adapter. When
+        # it points at ``worktree/src`` (e.g. claude_code._parse_output
+        # set code_dir = worktree / "src"), ``relative_to(code_dir)``
+        # strips the ``src/`` prefix and Phase 7 commits files at the
+        # project root rather than under ``src/`` — exactly where Phase 6
+        # validated them. Recover the prefix when we detect this layout.
         src_root = winner_result.code_dir
+        prefix_to_restore = ""
+        if src_root.name in {"src", "lib"}:
+            prefix_to_restore = src_root.name
         for src_path in src_root.rglob("*"):
             if not src_path.is_file():
+                continue
+            # Round 10.3 fix [Kimi RX-304 P0 — symlink data exfiltration]:
+            # ``Path.is_file()`` follows symlinks, so a malicious builder
+            # that drops a symlink ``src/data -> /etc/passwd`` (or
+            # ``~/.ssh/id_rsa``) would have its TARGET content copied
+            # into project_root and committed. Skip symlinks entirely
+            # at the staging gate — they have no legitimate purpose in
+            # an LLM-generated worktree.
+            if src_path.is_symlink():
+                logger.warning(
+                    "phase_7_symlink_skipped_in_worktree",
+                    path=str(src_path),
+                    target=str(src_path.readlink()) if src_path.is_symlink() else None,
+                )
                 continue
             # Skip git internals and caches in the worktree
             rel = src_path.relative_to(src_root)
@@ -253,7 +278,11 @@ async def phase_7_commit(
                 or rel_str.endswith(".pyc")
             ):
                 continue
-            target = project_root / rel
+            target = (
+                project_root / prefix_to_restore / rel
+                if prefix_to_restore
+                else project_root / rel
+            )
             target.parent.mkdir(parents=True, exist_ok=True)
             _copy_cross_device_safe(src_path, target)
             staged_paths.append(target)
@@ -269,6 +298,14 @@ async def phase_7_commit(
             tests_root = winner_result.tests_dir
             for src_path in tests_root.rglob("*"):
                 if not src_path.is_file():
+                    continue
+                # Round 10.3 fix [Kimi RX-304 P0]: same symlink defence
+                # applies on the tests/ side path.
+                if src_path.is_symlink():
+                    logger.warning(
+                        "phase_7_symlink_skipped_in_tests",
+                        path=str(src_path),
+                    )
                     continue
                 rel = src_path.relative_to(tests_root)
                 if "__pycache__" in rel.parts or str(rel).endswith(".pyc"):

@@ -34,6 +34,7 @@ from polybuild.models import (
     Finding,
     FixReport,
     FixResult,
+    PrivacyLevel,
     RiskProfile,
     Severity,
 )
@@ -72,10 +73,34 @@ def pick_triade(
     if risk_profile.excludes_openrouter:
         all_models = [(m, f) for m, f in all_models if not m.startswith(("deepseek/", "x-ai/"))]
     if risk_profile.excludes_us_cn_models:
-        excluded_families = {"anthropic", "openai", "google", "xai", "moonshot"}
+        # Round 10.3 fix [ChatGPT RX-301-07 P1]: ``deepseek`` was missing
+        # from the exclude set, so a sensitivity-HIGH run could re-admit
+        # a CN model in Phase 5 even though Phase 1 had filtered it out.
+        # Keep this list aligned with phase_1_select.is_us_or_cn_model().
+        excluded_families = {
+            "anthropic",
+            "openai",
+            "google",
+            "xai",
+            "moonshot",
+            "deepseek",
+            "alibaba",
+        }
         all_models = [(m, f) for m, f in all_models if f not in excluded_families]
 
     available = [(m, f) for m, f in all_models if f != winner_family]
+
+    # Round 10.3 fix [Kimi RX-301 P0]: with both excludes_openrouter and
+    # excludes_us_cn_models on (medical_high), the pool can collapse to a
+    # single family (mistral). If the winner happens to be that family,
+    # ``available`` is empty and ``available[0]`` raises IndexError —
+    # deterministic crash on every medical_high run with mistral winner.
+    if not available:
+        raise RuntimeError(
+            f"pick_triade: no candidate available after filtering for "
+            f"winner_family={winner_family!r} under {risk_profile=!r}. "
+            f"Widen the model pool or escalate."
+        )
 
     # Critic: any family ≠ winner
     critic_model, critic_family = available[0]
@@ -93,13 +118,69 @@ def pick_triade(
         if f not in {critic_family, fixer_family, auditor_family}
     ]
     if not verifier_candidates:
-        # Relax: allow auditor family for verifier (acceptable degradation)
+        # Round 10.3 fix [Grok RX-301-02 + Qwen + Gemini + DeepSeek]
+        # (4/4 conv, P0/P1): the previous fallback re-included
+        # ``auditor_family`` in the candidate pool, allowing the same
+        # family that produced the audit to also verify the fix —
+        # the canonical collusion vector. We now split the policy:
+        #
+        #   * sensitivity == HIGH (medical_high, legal opposable):
+        #     STRICT — raise InsufficientOrthogonalFamiliesError so the
+        #     caller can either widen the model pool or escalate to a
+        #     human reviewer. Silent collusion is unacceptable.
+        #
+        #   * other sensitivities: degraded relax with explicit
+        #     warning and a triade_degraded flag in logs (visible to
+        #     post-mortem). Same behaviour as before but auditable.
+        if (
+            risk_profile is not None
+            and risk_profile.sensitivity == PrivacyLevel.HIGH
+        ):
+            raise InsufficientOrthogonalFamiliesError(
+                "verifier",
+                excluded_families=sorted(
+                    {critic_family, fixer_family, auditor_family}
+                ),
+                hint=(
+                    "medical_high requires Critic/Fixer/Verifier from 3 "
+                    "distinct families AND a 4th for auditor. Widen the "
+                    "voice pool or escalate."
+                ),
+            )
+        logger.warning(
+            "pick_triade_relax_auditor_family_reused_as_verifier",
+            critic_family=critic_family,
+            fixer_family=fixer_family,
+            auditor_family=auditor_family,
+            triade_degraded=True,
+        )
         verifier_candidates = [
             (m, f) for m, f in available if f not in {critic_family, fixer_family}
         ]
     verifier_model = verifier_candidates[0][0]
 
     return critic_model, fixer_model, verifier_model
+
+
+class InsufficientOrthogonalFamiliesError(RuntimeError):
+    """Raised when the triade selector cannot find a fully-orthogonal
+    Critic/Fixer/Verifier set under a sensitivity policy that forbids
+    relaxation. Callers may catch this to escalate to a human reviewer
+    (Round 10.3 fix for collusion vector under medical_high).
+    """
+
+    def __init__(
+        self,
+        role: str,
+        excluded_families: list[str],
+        hint: str = "",
+    ) -> None:
+        super().__init__(
+            f"No orthogonal candidate for role={role!r} "
+            f"(excluded families: {excluded_families}). {hint}"
+        )
+        self.role = role
+        self.excluded_families = excluded_families
 
 
 # ────────────────────────────────────────────────────────────────
@@ -385,16 +466,38 @@ async def _invoke_role(
     from rewriting code. See builder_protocol.py:run_raw_prompt() for
     the no_write_roles enforcement.
 
+    Round 10.3 fix [Grok RX-301-01 + Qwen RX-301-03 + DeepSeek + Gemini
+    RX-301-01] (4/4 conv, P1): wrap the adapter call in
+    ``asyncio.wait_for`` with ``timeout_s + 30s`` slack. Adapters already
+    enforce per-call timeouts but a defunct child process can ignore them.
+    The outer ``wait_for`` guarantees the triade slot is freed even when
+    the adapter hangs at the subprocess boundary.
+
     Returns the raw text output. Adapter dispatch is handled by get_builder().
     """
     builder = get_builder(model)
-    raw = await builder.run_raw_prompt(
-        prompt=prompt,
-        workdir=code_dir.parent,
-        timeout_s=timeout_s,
-        role=role,
-        risk_profile=risk_profile,
-    )
+    safety_net_s = float(timeout_s) + 30.0
+    try:
+        raw = await asyncio.wait_for(
+            builder.run_raw_prompt(
+                prompt=prompt,
+                workdir=code_dir.parent,
+                timeout_s=timeout_s,
+                role=role,
+                risk_profile=risk_profile,
+            ),
+            timeout=safety_net_s,
+        )
+    except TimeoutError:
+        logger.error(
+            "phase_5_invoke_role_outer_timeout",
+            role=role,
+            model=model,
+            timeout_s=safety_net_s,
+        )
+        raise RuntimeError(
+            f"_invoke_role outer timeout: {role}/{model} hung > {safety_net_s:.0f}s"
+        ) from None
     return raw or ""
 
 
@@ -435,13 +538,25 @@ async def _triade_p0(
     # was reading `evidence.file_path` and `evidence.excerpt` which don't exist.
     # AttributeError on EVERY P0 finding → blocked_p0 → run abort. Deterministic
     # crash that 5 of 6 round-7 audits missed (Qwen flagged it correctly).
+    # Round 10.3 fix [Kimi RX-301-02 + Qwen RX-301-02 + ChatGPT RX-301-08]
+    # (3-conv P0): finding.description and evidence.snippet originate from
+    # the auditor LLM in Phase 4. A compromised auditor (or one that
+    # passed through a poisoned code/AGENTS.md context) can smuggle
+    # ``<!-- ignore previous instructions -->`` directives into either
+    # field. Without sanitization, those directives propagate verbatim
+    # into the Critic→Fixer→Verifier prompts and can hijack the triade.
+    # Sanitize at the format-time boundary as defence in depth.
+    from polybuild.security.prompt_sanitizer import sanitize_prompt_context
+
     critic_prompt = critic_template.format(
         finding_id=finding.id,
         severity=finding.severity.value,
         axis=finding.axis,
-        description=finding.description,
+        description=sanitize_prompt_context(finding.description),
         evidence_path=finding.evidence.file if finding.evidence else "n/a",
-        evidence_excerpt=(finding.evidence.snippet or "" if finding.evidence else "")[:2000],
+        evidence_excerpt=sanitize_prompt_context(
+            (finding.evidence.snippet or "" if finding.evidence else "")[:2000]
+        ),
     )
     try:
         critic_output = await _invoke_role("critic", critic, critic_prompt, winner.code_dir, risk_profile=risk_profile)
@@ -498,9 +613,10 @@ async def _triade_p0(
     max_no_test_strikes = 1
 
     for iteration in range(1, max_iterations + 1):
+        # Round 10.3 fix: critic_output is also LLM-controlled; sanitize.
         fixer_prompt = fixer_template.format(
             finding_id=finding.id,
-            critic_analysis=critic_output[:4000],
+            critic_analysis=sanitize_prompt_context(critic_output[:4000]),
             previous_verdict=fixer_feedback or "(first attempt)",
             evidence_path=finding.evidence.file if finding.evidence else "n/a",
         )
@@ -552,9 +668,11 @@ async def _triade_p0(
             continue
 
         # Verifier
+        # Round 10.3 fix: same sanitization on critic_output before
+        # injection into the verifier prompt.
         verifier_prompt = verifier_template.format(
             finding_id=finding.id,
-            critic_analysis=critic_output[:2000],
+            critic_analysis=sanitize_prompt_context(critic_output[:2000]),
             local_gates_status="all green",
         )
         try:
@@ -654,13 +772,18 @@ async def _triade_p1_batch(
     # "Single Critic confirmation pass (group review)" but the code skipped
     # straight to the Fixer. Either the docstring lied or the code missed
     # the call — fixing the code (cheaper than throwing away the contract).
+    # Round 10.3 fix [Kimi RX-301-02 / Qwen]: findings_block contains
+    # auditor-controlled text (descriptions, snippets); sanitize before
+    # injection.
+    from polybuild.security.prompt_sanitizer import sanitize_prompt_context
+
     critic_batch_prompt = critic_template.format(
         finding_id=f"P1_BATCH_{axis}",
         severity="P1",
         axis=axis,
         description=f"Batch of {len(findings)} P1 findings on axis '{axis}'",
         evidence_path="(see findings list)",
-        evidence_excerpt=findings_block[:2000],
+        evidence_excerpt=sanitize_prompt_context(findings_block[:2000]),
     )
     try:
         critic_batch_output = await _invoke_role(
@@ -674,9 +797,12 @@ async def _triade_p1_batch(
         logger.warning("p1_batch_critic_failed_proceeding", axis=axis, error=str(e))
         critic_batch_output = "(critic call failed; proceeding with raw findings)"
 
+    # Round 10.3 fix: P1 batch path is fed by both critic_batch_output
+    # (LLM-controlled) and findings_block (LLM-controlled via auditor).
+    # Sanitize the assembled critic_analysis before .format().
     fixer_prompt = fixer_template.format(
         finding_id=f"P1_BATCH_{axis}",
-        critic_analysis=(
+        critic_analysis=sanitize_prompt_context(
             f"Batch of {len(findings)} P1 findings on axis '{axis}'.\n"
             f"Critic group review: {critic_batch_output[:1500]}\n\n"
             f"Findings:\n{findings_block}"
@@ -774,22 +900,40 @@ async def phase_5_dispatch(
     #   P1 batch processing (single Critic + Fixer per axis, no Verifier).
     max_p0_triade = 5
     if len(p0_all) > max_p0_triade:
-        logger.warning(
-            "phase_5_p0_capped",
+        # Round 10.3 fix [ChatGPT RX-301-06 P0 — adversarial P0 budget
+        # exhaustion]: previously P0 findings beyond ``max_p0_triade``
+        # were silently downgraded to P1 batch (no per-finding Critic/
+        # Verifier loop). An attacker could plant 5 noisy P0 findings
+        # ahead of one real P0 to push the real one out of the triade
+        # gate, defeating its blocking semantics. We now refuse the
+        # whole audit and return a ``blocked_p0`` FixReport — better a
+        # hard stop than a silent demotion of a critical finding.
+        logger.error(
+            "phase_5_p0_budget_exhausted_blocked_p0",
             original=len(p0_all),
-            kept=max_p0_triade,
-            downgraded_to_p1=len(p0_all) - max_p0_triade,
+            cap=max_p0_triade,
             hint=(
-                "P0 findings beyond cap are downgraded to P1 to bound LLM "
-                "spend. Tune max_p0_triade if your auditor is intentionally "
-                "exhaustive and budget allows."
+                "More than max_p0_triade=5 P0 findings detected. Refusing "
+                "to demote — re-audit, dedup or escalate. Adversarial "
+                "scenario : noisy P0s shielding a real one."
             ),
         )
-        p0 = p0_all[:max_p0_triade]
-        downgraded = p0_all[max_p0_triade:]
-    else:
-        p0 = p0_all
-        downgraded = []
+        return FixReport(
+            status="blocked_p0",
+            results=[
+                FixResult(
+                    finding_ids=[f.id],
+                    status="escalate",
+                    critic_model="<budget-exhausted>",
+                    fixer_model="<budget-exhausted>",
+                    verifier_model="<budget-exhausted>",
+                    iterations=0,
+                )
+                for f in p0_all
+            ],
+        )
+    p0 = p0_all
+    downgraded: list[Finding] = []
 
     p1_by_axis: dict[str, list[Finding]] = defaultdict(list)
     for f in audit.findings:

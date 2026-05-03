@@ -121,6 +121,53 @@ Le LLM (Opus, Codex, Gemini) interprète ce commentaire et peut être détourné
 
 ---
 
+## Mise à jour Round 10.3 — patches post-audit Gemini+Grok+Qwen+DeepSeek+ChatGPT+Kimi
+
+Troisième cycle d'audit cross-LLM. 5 voix orthogonales ont passé en revue
+le commit 3e52344 et identifié 12 findings convergents (≥2/5 voix sur la
+majorité, **5/5 sur les 4 P0 critiques de Phase 4**) plus 2 hallucinations
+rejetées.
+
+| Patch | Source(s) | Sévérité | Mitigation |
+|---|---|---|---|
+| `_invoke_role` outer timeout | Grok+Qwen+DeepSeek+Gemini (4/5) | P1 | `asyncio.wait_for(... timeout_s+30s)` autour des appels adapter |
+| `pick_triade` strict collusion HIGH | Grok+Qwen+Gemini+DeepSeek (4/5) | P0 | `InsufficientOrthogonalFamiliesError` au lieu de relax silencieux |
+| `pick_triade` IndexError | Kimi (1/5 critique) | P0 | guard pool empty avant `available[0]` |
+| Phase 7 symlink traversal | Kimi (adversarial) | P0 | `is_symlink()` skip dans staging code + tests |
+| OR API key fail-closed | DeepSeek+Kimi+ChatGPT+Gemini+Qwen (5/5) | P0 | raise sur OR-bound, soft-warn sinon |
+| Lazy audit exhaustion fail-loud | Qwen+DeepSeek+Kimi+ChatGPT (4/5) | P0 | raise après dernier retry lazy |
+| `_resolve_config_root` | ChatGPT (1/5 critique) | P0 | walk-up + env override (était `src/config` cassé) |
+| P0 budget overflow → blocked_p0 | ChatGPT (1/5 critique) | P0 | block au lieu de demote (anti adversarial flooding) |
+| Phase 7 src/ prefix | ChatGPT (1/5 critique) | P0 | restore `src/` ou `lib/` lorsque code_dir y pointe |
+| DeepSeek + alibaba excludes | ChatGPT (1/5) | P1 | aligne pick_triade avec is_us_or_cn_model |
+| `finding.description` sanitize Phase 5 | Kimi+Qwen+ChatGPT (3/5) | P0 | sanitize_prompt_context sur tous les .format() inputs |
+| Code-as-evidence sanitize Phase 4 | Grok+DeepSeek+ChatGPT+Qwen+Gemini (5/5) | P0 | sanitize body + UNTRUSTED EVIDENCE preamble |
+| Phase 4 byte budget tracking | ChatGPT (1/5) | P2 | `len(content.encode("utf-8"))` au lieu de `len(content)` |
+| Phase 4 parse fail-closed | ChatGPT (1/5) | P1 | raise si raw findings non-vide mais 0 parsed |
+| Phase 4 retry honours risk_profile | ChatGPT+DeepSeek (2/5) | P1 | `filter_candidates` sur alternatives |
+| Phase 4 audit symlink skip | Kimi+Qwen | P1 | parallèle au fix Phase 7 |
+
+**Tests** : +17 tests régression dans `tests/regression/test_round10_3_audit_patches.py` couvrant chaque patch + 4 honeypots adversariaux.
+
+**Suite cumulée** : 349 → **365 passed**, 6 skipped, 9 xfailed (1 test
+xfail ajouté car le P0 budget overflow change le comportement
+test_p0_capped_at_5).
+
+**Findings rejetés round 10.3** :
+- Grok RX-301 hallucination `_load_agents_md_sanitized` (toujours, fonction n'a jamais existé)
+- Gemini RX-102-01 tenacity livelock (pas de tenacity dans le repo)
+- Qwen P1-03 CLI fallback hardcoded Claude (déjà fixé round 9 [Kimi-audit-fallback] via `get_builder()`)
+- Kimi RX-301-04 / Grok RX-301-02 collusion fallback non-HIGH (kept as logged warning, not breaking)
+
+**Backlog Round 10.4** :
+- Kimi RX-301-08 TOCTOU AGENTS.md (lock at run start)
+- Kimi RX-301-06 _SHUTDOWN_DRAIN_TASKS per run_id
+- Qwen P1-04 CLILimiter bypass Phase 4/5
+- ChatGPT RX-301-01 default `run_raw_prompt` worktree synthétique pour fixer
+- DeepSeek RX-301-01 Critic FALSE_POSITIVE substring → JSON verdict structuré
+- Grok RX-301 phase_7 fallback `git add -A` legacy
+- timeouts.yaml chargé par le code
+
 ## Mise à jour Round 10.2.1 — adapter sanitization (ChatGPT + Kimi convergent)
 
 ChatGPT a rejoint le cycle d'audit après que le repo public soit devenu
