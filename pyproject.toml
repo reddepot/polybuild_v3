@@ -144,6 +144,8 @@ ignore = [
 ]
 "src/polybuild/phases/phase_8_prod_smoke.py" = ["PLR0915"]
 "src/polybuild/phases/phase_5_triade.py" = ["PLR0915"]
+# Bench scripts use print for CLI output; not production code.
+"scripts/**/*.py" = ["T201", "E731"]
 
 # ──────────────────────────────────────────────────
 # MYPY STRICT
