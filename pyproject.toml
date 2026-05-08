@@ -41,6 +41,19 @@ embeddings = [
 local = [
     "ollama>=0.1",
 ]
+# M2A.3 — DEVCODE-Vote v1 arbitration, opt-in via ``--scorer=devcode``.
+# devcode v1.0 lives at ``~/Developer/projects/devcode`` (sibling
+# project, not yet on PyPI). The ``file://`` URL hard-codes the local
+# path because PEP 508 has no environment-variable expansion; replace
+# with a PyPI version pin (``devcode>=1.0.0``) once published.
+# Install:
+#   pip install -e ".[devcode]"        # auto if the path resolves
+#   # or override the path:
+#   pip install -e ~/path/to/devcode
+#   pip install -e ".[devcode]"
+devcode = [
+    "devcode @ file:///Users/radu/Developer/projects/devcode",
+]
 
 [project.scripts]
 polybuild = "polybuild.cli:app"
@@ -48,6 +61,13 @@ polybuild = "polybuild.cli:app"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# M2A.3: the optional ``[devcode]`` extra uses a ``file://`` direct URL
+# (see ``[project.optional-dependencies] devcode``) because devcode is
+# not yet on PyPI. Hatchling rejects direct-reference deps unless we
+# opt in here.
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/polybuild"]
