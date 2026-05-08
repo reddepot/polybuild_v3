@@ -47,6 +47,12 @@ from polybuild.audit.backlog import (
 from polybuild.audit.backlog import (
     read_backlog as read_backlog,
 )
+from polybuild.audit.notifier import (
+    build_digest as build_digest,
+)
+from polybuild.audit.notifier import (
+    notify_findings as notify_findings,
+)
 from polybuild.audit.queue import (
     AuditQueueEntry as AuditQueueEntry,
 )
@@ -94,9 +100,11 @@ __all__ = [
     "append_findings",
     "append_queue_entry",
     "audit_commit",
+    "build_digest",
     "compute_fingerprint",
     "drain_queue",
     "extract_commit_diff",
+    "notify_findings",
     "pick_voice_pair",
     "read_backlog",
     "read_queue",

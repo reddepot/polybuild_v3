@@ -383,6 +383,127 @@ class TestRunner:
 # ────────────────────────────────────────────────────────────────
 
 
+class TestNotifier:
+    def _make_finding(
+        self,
+        severity: str = "P0",
+        fingerprint: str = "fp" + "0" * 30,
+        message: str = "test finding",
+    ) -> BacklogFinding:
+        return BacklogFinding(
+            fingerprint=fingerprint,
+            commit_sha="cafebab",
+            file="src/foo.py",
+            line=10,
+            axis="A_security",
+            severity=severity,  # type: ignore[arg-type]
+            message=message,
+            voice="codex-gpt-5.5",
+        )
+
+    def test_notify_persists_all_severities(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polybuild.audit.notifier import notify_findings
+
+        # Disable both surfaces so we don't actually fire osascript /
+        # write to stderr in the test runner.
+        monkeypatch.setattr(
+            "polybuild.audit.notifier._send_macos_banner", lambda **_: True
+        )
+
+        findings = [
+            self._make_finding(severity=sev, fingerprint=f"fp{i:030d}")
+            for i, sev in enumerate(["P0", "P1", "P2", "P3"])
+        ]
+        counts = notify_findings(findings, backlog_dir=tmp_path)
+        assert counts == {"P0": 1, "P1": 1, "P2": 1, "P3": 1}
+        # All four (incl. P2/P3) reach the backlog.
+        loaded = read_backlog(backlog_dir=tmp_path)
+        assert {f.severity for f in loaded} == {"P0", "P1", "P2", "P3"}
+
+    def test_notify_dry_run_skips_persist(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polybuild.audit.notifier import notify_findings
+
+        monkeypatch.setattr(
+            "polybuild.audit.notifier._send_macos_banner", lambda **_: True
+        )
+
+        notify_findings([self._make_finding("P0")], backlog_dir=tmp_path, persist=False)
+        # Backlog is untouched.
+        assert read_backlog(backlog_dir=tmp_path) == []
+
+    def test_notify_p0_p1_only_use_banner(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polybuild.audit.notifier import notify_findings
+
+        called_with: list[tuple[str, str]] = []
+
+        def _record(*, title: str, message: str) -> bool:
+            called_with.append((title, message))
+            return True
+
+        monkeypatch.setattr(
+            "polybuild.audit.notifier._send_macos_banner", _record
+        )
+
+        findings = [
+            self._make_finding("P0", fingerprint="fp" + "0" * 30, message="p0 issue"),
+            self._make_finding("P1", fingerprint="fp" + "1" * 30, message="p1 issue"),
+            self._make_finding("P2", fingerprint="fp" + "2" * 30, message="p2 issue"),
+            self._make_finding("P3", fingerprint="fp" + "3" * 30, message="p3 issue"),
+        ]
+        notify_findings(findings, backlog_dir=tmp_path)
+        # Exactly P0 + P1 reach the banner; P2 / P3 stay quiet.
+        assert len(called_with) == 2
+        assert any("P0" in title for title, _ in called_with)
+        assert any("P1" in title for title, _ in called_with)
+
+
+class TestDigest:
+    def test_digest_empty_window(self, tmp_path: Path) -> None:
+        from polybuild.audit.notifier import build_digest
+
+        out = build_digest(since="yesterday", backlog_dir=tmp_path)
+        assert out == "no findings in window"
+
+    def test_digest_groups_by_severity(self, tmp_path: Path) -> None:
+        from polybuild.audit.notifier import build_digest
+
+        for i, sev in enumerate(["P0", "P0", "P1", "P2"]):
+            append_findings(
+                [
+                    BacklogFinding(
+                        fingerprint=f"fp{i:030d}",
+                        commit_sha="abc",
+                        file=f"f{i}.py",
+                        line=10 + i,
+                        axis="A_security",
+                        severity=sev,  # type: ignore[arg-type]
+                        message=f"msg-{i}",
+                        voice="codex-gpt-5.5",
+                    )
+                ],
+                backlog_dir=tmp_path,
+            )
+        out = build_digest(since="week", backlog_dir=tmp_path)
+        assert "Total findings: 4" in out
+        assert "P0: 2" in out
+        assert "P1: 1" in out
+        assert "P2: 1" in out
+        # Each section header present in order.
+        assert out.index("## P0") < out.index("## P1") < out.index("## P2")
+
+
 class TestDefaultVoiceCaller:
     @pytest.mark.asyncio
     async def test_unknown_voice_returns_empty(self) -> None:
