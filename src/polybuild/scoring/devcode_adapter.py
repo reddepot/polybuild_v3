@@ -9,6 +9,12 @@ This module is a **pure function** with no side-effects, no network and no
 LLM calls — the heavy math is done by ``devcode.aggregation.devcode_vote_v1``
 once we have the votes.
 
+The ``devcode`` package is an optional dependency (extra ``[devcode]``);
+imports happen lazily inside the public functions so the module loads
+cleanly even when ``devcode`` is not installed. Only callers that actually
+invoke the functions pay the import cost (and trigger an :class:`ImportError`
+if the extra is missing).
+
 ## Heuristic ranking
 
 DEVCODE asks each voice to rank the options (= candidates = OK voices). We
@@ -24,80 +30,60 @@ DEVCODE-Vote v1's value-add reduces to:
   * family collusion penalty (cosine similarity on output embeddings —
     None here for now, so the penalty is inactive),
   * reputation weighting (Glicko-2 mu/RD per voice / domain / task_type),
-  * cross-cultural supermajority check (P0/P1/P2 require ≥1 non-Western
+  * cross-cultural supermajority check (P0/P1/P2 require >=1 non-Western
     voice).
 
 That is still strictly more information than the bare ``max(score)``
 picker the naive scorer uses, which is the M2A trade-off the user agreed
-to (option β reformulée).
+to (option beta reformulee).
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from devcode.models import (
-    DecisionContext,
-    Family,
-    Priority,
-    Vote,
-)
-
 from polybuild.models import PrivacyLevel, Status
 
 if TYPE_CHECKING:
+    from devcode.models import DecisionContext, Vote
+
     from polybuild.models import BuilderResult, Spec, VoiceScore
 
 
-# DEVCODE's ``OptionId`` is ``TypeAlias = int`` but mypy can't see through
-# the ``devcode`` override (no ``py.typed`` marker), so we use plain ``int``
-# locally to keep strict typing at the POLYBUILD boundary.
+# DEVCODE's ``OptionId`` is ``TypeAlias = int``; we use plain ``int``
+# locally so the POLYBUILD boundary stays fully typed even when
+# ``devcode`` is not installed at module load time.
 OptionId = int
 
 
-# POLYBUILD family strings → DEVCODE ``Family`` enum. Kept exhaustive on
-# purpose: any new POLYBUILD family must be explicitly mapped here so the
-# reputation store and the collusion penalty get the right grouping.
-_FAMILY_MAP: dict[str, Family] = {
-    "anthropic": Family.ANTHROPIC,
-    "openai": Family.OPENAI,
-    "google": Family.GOOGLE,
-    "mistral": Family.MISTRAL,
-    "moonshot": Family.MOONSHOT,
-    "deepseek": Family.DEEPSEEK,
-    "minimax": Family.MINIMAX,
-    "xiaomi": Family.XIAOMI,
-    # OpenRouter family slugs used by POLYBUILD adapters/__init__.py
-    "zai": Family.ZHIPU,
-    "qwen": Family.ALIBABA,
+# POLYBUILD family strings → DEVCODE ``Family`` enum value. Stored as
+# plain strings here so the map can be defined without importing devcode;
+# the string is converted to ``devcode.models.Family`` at use site.
+# Kept exhaustive on purpose: any new POLYBUILD family must be explicitly
+# mapped here so the reputation store and the collusion penalty get the
+# right grouping. Unknown families raise — silent fallback would hide
+# cross-voice collusion (Round 5 / Round 8 anti-pattern).
+_FAMILY_MAP: dict[str, str] = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "google": "google",
+    "mistral": "mistral",
+    "moonshot": "moonshot",
+    "deepseek": "deepseek",
+    "minimax": "minimax",
+    "xiaomi": "xiaomi",
+    # OpenRouter family slugs used by polybuild.adapters.__init__
+    "zai": "zhipu",
+    "qwen": "alibaba",
 }
 
 
-def _polybuild_family_to_devcode(family: str) -> Family:
-    """Translate a POLYBUILD family string to a DEVCODE :class:`Family`.
-
-    Raises:
-        ValueError: when no mapping exists. We refuse to silently bucket an
-            unknown family because DEVCODE's collusion penalty relies on
-            correct family grouping (Round 5 / Round 8 anti-pattern: silent
-            fallback hides cross-voice collusion).
-    """
-    try:
-        return _FAMILY_MAP[family]
-    except KeyError as e:
-        raise ValueError(
-            f"DEVCODE Family mapping missing for POLYBUILD family {family!r}. "
-            "Add it to scoring/devcode_adapter._FAMILY_MAP or upstream "
-            "devcode.models.Family."
-        ) from e
-
-
-# Privacy / sensitivity → DEVCODE Priority. POLYBUILD doesn't have
-# free-form priorities, so we drive Priority from the spec's risk profile.
-_PRIORITY_MAP: dict[PrivacyLevel, Priority] = {
-    PrivacyLevel.HIGH: Priority.P0,
-    PrivacyLevel.MEDIUM: Priority.P1,
-    PrivacyLevel.LOW: Priority.P2,
+# POLYBUILD privacy level → DEVCODE Priority value. Same lazy-string
+# approach as _FAMILY_MAP.
+_PRIORITY_MAP: dict[PrivacyLevel, str] = {
+    PrivacyLevel.HIGH: "P0",
+    PrivacyLevel.MEDIUM: "P1",
+    PrivacyLevel.LOW: "P2",
 }
 
 
@@ -121,9 +107,19 @@ def builder_results_to_devcode_votes(
         ``(votes, ctx)`` ready for ``devcode.aggregation.devcode_vote_v1``.
 
     Raises:
+        ImportError: if the ``devcode`` extra is not installed.
         ValueError: if no voice succeeded (no candidate to vote on) or if
             a family is missing from ``_FAMILY_MAP``.
     """
+    # Lazy import — only callers that actually use DEVCODE pay the cost,
+    # and the module imports cleanly even without the extra.
+    from devcode.models import (
+        DecisionContext,
+        Family,
+        Priority,
+        Vote,
+    )
+
     ok_results = [r for r in results if r.status == Status.OK]
     if not ok_results:
         raise ValueError(
@@ -161,7 +157,7 @@ def builder_results_to_devcode_votes(
     votes = [
         Vote(
             voice_id=r.voice_id,
-            family=_polybuild_family_to_devcode(r.family),
+            family=Family(_polybuild_family_to_devcode_str(r.family)),
             ranked_options=consensus_ranking,
             confidences=confidence_map,
             evidence=[],
@@ -170,17 +166,36 @@ def builder_results_to_devcode_votes(
         for r in ok_results
     ]
 
-    priority = _PRIORITY_MAP.get(spec.risk_profile.sensitivity, Priority.P1)
+    priority_str = _PRIORITY_MAP.get(spec.risk_profile.sensitivity, "P1")
     ctx = DecisionContext(
         decision_id=spec.run_id,
         domain=spec.profile_id,
         task_type="code_generation",
-        priority=priority,
+        priority=Priority(priority_str),
         options=options,
         seed=42,
     )
 
     return votes, ctx
+
+
+def _polybuild_family_to_devcode_str(family: str) -> str:
+    """Translate a POLYBUILD family string to the DEVCODE ``Family`` value.
+
+    Returns the string value (e.g. ``"anthropic"``); the caller wraps it
+    in ``devcode.models.Family(...)`` at the call site.
+
+    Raises:
+        ValueError: when no mapping exists.
+    """
+    try:
+        return _FAMILY_MAP[family]
+    except KeyError as e:
+        raise ValueError(
+            f"DEVCODE Family mapping missing for POLYBUILD family {family!r}. "
+            "Add it to scoring/devcode_adapter._FAMILY_MAP or upstream "
+            "devcode.models.Family."
+        ) from e
 
 
 def option_to_voice_id(

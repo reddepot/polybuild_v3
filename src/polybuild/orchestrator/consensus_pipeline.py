@@ -1,11 +1,11 @@
 """Canonical consensus pipeline (Phase 1 → Phase 5).
 
 Extracted from :func:`polybuild.orchestrator._run_polybuild_inner` in
-M2B.0. Behaviour is byte-identical to the prior in-line implementation —
-only the surrounding control-flow is now expressed via the
-:class:`~polybuild.orchestrator.pipeline_strategy.PipelineStrategy`
-protocol so that ``SoloPipeline`` (M2B.2) can plug into the same
-orchestrator without conditional branches.
+M2B.0. Behaviour is byte-identical to the prior in-line implementation
+when used with the default ``NaiveScorer``. Pass a
+:class:`~polybuild.scoring.devcode_scorer.DevcodeScorer` to enable
+DEVCODE-Vote v1 arbitration (Schulze pondéré bayésien Glicko-2 +
+family collusion + cross-cultural supermajority).
 
 Phase functions are looked up dynamically through the
 ``polybuild.orchestrator`` module so that test code that calls
@@ -25,6 +25,7 @@ from polybuild.orchestrator.pipeline_strategy import (
     CheckpointFn,
     StrategyOutcome,
 )
+from polybuild.scoring import NaiveScorer, ScorerProtocol
 
 if TYPE_CHECKING:
     from polybuild.models import RiskProfile, Spec
@@ -42,9 +43,21 @@ class ConsensusPipeline:
       * the chosen winner is missing from ``builder_results`` (data-flow
         bug, defensive guard kept from the prior implementation), or
       * Phase 5 returns ``blocked_p0``.
+
+    Constructor:
+
+      scorer: any :class:`ScorerProtocol` implementation. Defaults to
+        :class:`NaiveScorer` (current Phase 3 gate-based scoring,
+        winner picked by the eligibility filter). Pass
+        :class:`DevcodeScorer` for DEVCODE-Vote v1 arbitration — the
+        Schulze winner overrides the eligibility filter unless the
+        scorer abstains.
     """
 
     name = "consensus"
+
+    def __init__(self, scorer: ScorerProtocol | None = None) -> None:
+        self.scorer: ScorerProtocol = scorer or NaiveScorer()
 
     async def run(
         self,
@@ -80,11 +93,19 @@ class ConsensusPipeline:
             project_root,
         )
 
-        # ── Phase 3: scoring ──
-        scores = await _orch.phase_3_score(builder_results)
+        # ── Phase 3: scoring (delegated to scorer strategy, M2A) ──
+        scored = await self.scorer.score(builder_results, spec)
+        scores = scored.voice_scores
         save_checkpoint(
             run_id, "phase3",
-            {"scores": [s.model_dump() for s in scores]},
+            {
+                "scores": [s.model_dump() for s in scores],
+                "scorer_name": scored.scorer_name,
+                "confidence": scored.confidence,
+                "requires_polylens_review": scored.requires_polylens_review,
+                "winner_voice_id_from_scorer": scored.winner_voice_id,
+                "debug_data": scored.debug_data,
+            },
             project_root,
         )
 
@@ -97,41 +118,81 @@ class ConsensusPipeline:
             project_root,
         )
 
-        # Determine winner: highest score, not disqualified, no critical
-        # grounding finding.
-        # Round 10.1 fix [Kimi P0 #4]: previously we only counted P0
-        # (syntax) findings. The audit pointed out that the spec rule
-        # "≥2 hallucinated imports = disqualification" lives in
-        # ``grounding_disqualifies`` and was never wired into the
-        # eligibility check. A builder with two hallucinations could
-        # therefore still be picked as winner. We now apply the canonical
-        # disqualification rule from phase_3b.
-        eligible = []
-        for s in scores:
-            if s.disqualified:
-                continue
-            gfindings = grounding.get(s.voice_id, [])
-            dq, dq_reason = _orch.grounding_disqualifies(gfindings)
-            if dq:
-                logger.warning(
-                    "grounding_disqualified_winner_candidate",
-                    voice_id=s.voice_id,
-                    reason=dq_reason,
+        # Determine winner.
+        # Two paths:
+        #   * The scorer returned an explicit ``winner_voice_id`` (DEVCODE
+        #     Schulze winner, M2A.2). We honour it as long as the matching
+        #     ``BuilderResult`` exists and is not grounding-disqualified.
+        #   * The scorer abstained (``winner_voice_id is None``, the naive
+        #     case). Apply the canonical eligibility filter below — same
+        #     algorithm as before M2A.
+        # Round 10.1 fix [Kimi P0 #4]: ``grounding_disqualifies`` is
+        # applied in BOTH paths; the spec rule "≥2 hallucinated imports
+        # = disqualification" lives in ``grounding_disqualifies`` and a
+        # winner with hallucinations is unsafe regardless of the scorer.
+        winner_score: Any | None = None
+        winner_result: Any | None = None
+        abort_reason: str | None = None
+
+        if scored.winner_voice_id is not None:
+            # Scorer-picked winner.
+            winner_score = next(
+                (s for s in scores if s.voice_id == scored.winner_voice_id),
+                None,
+            )
+            if winner_score is None:
+                logger.error(
+                    "scorer_winner_voice_id_not_in_scores",
+                    winner=scored.winner_voice_id,
+                    scorer=scored.scorer_name,
                 )
-                continue
-            eligible.append(s)
-        if not eligible:
-            logger.error("no_eligible_winner")
+                abort_reason = "scorer_winner_voice_id_not_in_scores"
+            else:
+                gfindings = grounding.get(winner_score.voice_id, [])
+                dq, dq_reason = _orch.grounding_disqualifies(gfindings)
+                if dq:
+                    logger.warning(
+                        "scorer_winner_grounding_disqualified",
+                        voice_id=winner_score.voice_id,
+                        reason=dq_reason,
+                        scorer=scored.scorer_name,
+                    )
+                    abort_reason = "scorer_winner_grounding_disqualified"
+                    winner_score = None
+
+        if winner_score is None and abort_reason is None:
+            # Eligibility-filter path (naive scorer abstain or scorer
+            # didn't pick / its pick was disqualified upstream).
+            eligible = []
+            for s in scores:
+                if s.disqualified:
+                    continue
+                gfindings = grounding.get(s.voice_id, [])
+                dq, dq_reason = _orch.grounding_disqualifies(gfindings)
+                if dq:
+                    logger.warning(
+                        "grounding_disqualified_winner_candidate",
+                        voice_id=s.voice_id,
+                        reason=dq_reason,
+                    )
+                    continue
+                eligible.append(s)
+            if eligible:
+                winner_score = eligible[0]
+            else:
+                logger.error("no_eligible_winner")
+                abort_reason = "no_eligible_winner"
+
+        if winner_score is None:
             return StrategyOutcome(
                 voices=voices,
                 builder_results=builder_results,
                 scores=scores,
                 grounding=grounding,
                 aborted=True,
-                abort_reason="no_eligible_winner",
+                abort_reason=abort_reason or "no_eligible_winner",
             )
 
-        winner_score = eligible[0]
         winner_result = next(
             (r for r in builder_results if r.voice_id == winner_score.voice_id),
             None,

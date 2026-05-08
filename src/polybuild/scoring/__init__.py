@@ -5,14 +5,15 @@ Public API:
   * ``ScorerProtocol`` — typing.Protocol any scorer must implement.
   * ``ScoredResult`` — unified Pydantic output (consumed by
     ``polybuild.orchestrator.consensus_pipeline``).
-
-The naive scorer (current behaviour) and the DEVCODE-backed scorer
-land in M2A.2 (modules ``naive_scorer`` and ``devcode_scorer``) and
-register here when imported.
+  * ``NaiveScorer`` — default, current Phase 3 gate-based scoring.
+  * ``DevcodeScorer`` — opt-in, ``--scorer=devcode``. Imports the
+    optional ``devcode`` package lazily so the naive path stays free
+    of the dependency.
 """
 
 from __future__ import annotations
 
+from polybuild.scoring.naive_scorer import NaiveScorer as NaiveScorer
 from polybuild.scoring.protocol import (
     ScoredResult as ScoredResult,
 )
@@ -20,4 +21,18 @@ from polybuild.scoring.protocol import (
     ScorerProtocol as ScorerProtocol,
 )
 
-__all__ = ["ScoredResult", "ScorerProtocol"]
+
+def _load_devcode_scorer():  # type: ignore[no-untyped-def]
+    """Lazy loader for :class:`DevcodeScorer`.
+
+    The ``devcode`` package is an optional dependency (extra
+    ``[devcode]``); importing the scorer module triggers the heavy
+    ``import devcode.aggregation``. Callers that stay on the naive
+    scorer never pay that cost.
+    """
+    from polybuild.scoring.devcode_scorer import DevcodeScorer
+
+    return DevcodeScorer
+
+
+__all__ = ["NaiveScorer", "ScoredResult", "ScorerProtocol", "_load_devcode_scorer"]
