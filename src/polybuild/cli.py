@@ -23,7 +23,12 @@ from rich.console import Console
 from rich.table import Table
 
 from polybuild import __version__
-from polybuild.orchestrator import run_polybuild
+from polybuild.orchestrator import (
+    ConsensusPipeline,
+    PipelineStrategy,
+    SoloPipeline,
+    run_polybuild,
+)
 
 app = typer.Typer(help="POLYBUILD v3 — Multi-LLM orchestrated code generation")
 console = Console()
@@ -63,6 +68,16 @@ def run(
     run_id: str | None = typer.Option(
         None, "--run-id", help="Override the auto-generated run id (used by /polybuild)"
     ),
+    solo: bool = typer.Option(
+        False,
+        "--solo",
+        help=(
+            "Use the single-voice short-circuit pipeline (skip Phase 2/3/5 "
+            "consensus). Faster, cheaper, no parallel generation. "
+            "Implementation lands in M2B.2; until then ``--solo`` raises "
+            "NotImplementedError."
+        ),
+    ),
 ) -> None:
     """Run the full POLYBUILD pipeline.
 
@@ -74,10 +89,16 @@ def run(
 
     brief_text = brief.read_text()
 
+    # Pick the pipeline strategy. ``run_polybuild`` defaults to
+    # ConsensusPipeline when ``strategy=None``; we make the choice
+    # explicit here so the CLI can echo it in the run banner.
+    strategy: PipelineStrategy = SoloPipeline() if solo else ConsensusPipeline()
+
     console.print(f"[cyan]POLYBUILD v{__version__}[/cyan]")
     console.print(f"  Profile: {profile}")
     console.print(f"  Brief: {brief}")
     console.print(f"  Project: {project_root.absolute()}")
+    console.print(f"  Strategy: {strategy.name}")
     console.print(f"  Skip commit: {skip_commit}")
     console.print(f"  Skip smoke: {skip_smoke}")
     console.print()
@@ -94,6 +115,7 @@ def run(
             skip_commit=skip_commit,
             skip_smoke=skip_smoke,
             project_ctx=project_ctx or None,
+            strategy=strategy,
         )
     )
 
