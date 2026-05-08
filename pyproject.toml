@@ -1,6 +1,6 @@
 [project]
 name = "polybuild-core"
-version = "3.0.0-dev"
+version = "3.1.0"
 description = "Multi-LLM orchestrated code generation pipeline for solo Python dev"
 authors = [{name = "reddie", email = "redtech@protonmail.com"}]
 readme = "README.md"
