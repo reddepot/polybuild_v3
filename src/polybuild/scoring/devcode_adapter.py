@@ -148,10 +148,13 @@ def builder_results_to_devcode_votes(
         voice_to_option[v] for v in ranking_voice_ids
     ]
 
-    # Per-option confidence = that option's gate score. All voices report
-    # the same map (no cross-evaluation).
+    # Per-option confidence = that option's gate score, normalised to
+    # [0, 1] (the POLYBUILD score formula tops out around 100; DEVCODE's
+    # ``Vote.confidences`` validator rejects anything outside [0, 1]).
+    # Empty inputs yield 0.0 by clamping rather than NaN.
     confidence_map: dict[OptionId, float] = {
-        voice_to_option[v]: score_map.get(v, 0.0) for v in voice_ids
+        voice_to_option[v]: max(0.0, min(1.0, score_map.get(v, 0.0) / 100.0))
+        for v in voice_ids
     }
 
     votes = [
