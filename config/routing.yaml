@@ -46,7 +46,7 @@ profiles:
       - gpt-5.5
       - gemini-3.1-pro
       - kimi-k2.6
-      - z-ai/glm-4.6        # ZhipuAI 智谱 — stable, cost-efficient
+      - z-ai/glm-5.1        # ZhipuAI 智谱 — stable, cost-efficient
       - qwen/qwen3.6-max-preview  # Alibaba 阿里 — code+math
       - moonshotai/kimi-k2.6      # OR fallback si CLI kimi down
     audit_axes: [B_quality, C_tests, E_architecture, F_documentation]
@@ -275,14 +275,14 @@ profiles:
     voices_phase2:
       - gpt-5.5                            # CLI, voix occidentale builder
       - kimi-k2.6                          # CLI, voix chinoise (Moonshot)
-      - z-ai/glm-4.6                       # OR, voix chinoise (ZhipuAI)
+      - z-ai/glm-5.1                       # OR, voix chinoise (ZhipuAI)
     mediator: claude-opus-4.7
     pool_for_diversity:
       - claude-opus-4.7
       - gpt-5.5
       - gemini-3.1-pro
       - kimi-k2.6
-      - z-ai/glm-4.6
+      - z-ai/glm-5.1
       - z-ai/glm-5.1
       - qwen/qwen3.6-max-preview
       - qwen/qwen3.6-coder

@@ -369,7 +369,7 @@ polybuild audit enqueue --sha <SHA> --repo .  # manual enqueue (used by hook)
 | Claude Code | Max 20x | Opus 4.7, Sonnet 4.6, Haiku 4.5 |
 | Codex CLI | ChatGPT Pro | GPT-5.5, GPT-5.5-Pro, GPT-5.3-Codex |
 | Gemini CLI | Pro | Gemini 3.1 Pro, Flash |
-| Kimi CLI | Allegretto | K2.6 |
+| Kimi CLI | Allegro | K2.6 |
 
 OpenRouter complémentaire : **DeepSeek V4-Pro, Grok 4.20, Qwen** (irreplaçables, ~15-20€/mois). API Mistral EU directe pour profils `medical_high`. Ollama NAS (Qwen 2.5 Coder 14B INT4) pour `medical_high` paranoïa.
 

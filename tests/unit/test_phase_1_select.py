@@ -69,7 +69,6 @@ class TestIsUSOrCNModel:
             ("qwen/qwen3.6-max-preview", True),
             ("qwen/qwen3.6-coder", True),
             ("z-ai/glm-5.1", True),
-            ("z-ai/glm-4.6", True),
             ("moonshotai/kimi-k2.6", True),
             ("minimax/minimax-m2.7", True),
             ("xiaomi/mimo-v2.5-pro", True),
@@ -120,7 +119,7 @@ class TestFilterCandidates:
             "qwen2.5-coder:7b-int4",  # local Ollama, must stay
             "qwen/qwen3.6-max-preview",  # OR Alibaba CN, must go
             "qwen/qwen3.6-coder",  # OR Alibaba CN, must go
-            "z-ai/glm-4.6",  # OR ZhipuAI CN, must go
+            "z-ai/glm-5.1",  # OR ZhipuAI CN, must go
             "moonshotai/kimi-k2.6",  # OR Moonshot CN, must go
             "minimax/minimax-m2.7",  # OR MiniMax CN, must go
             "xiaomi/mimo-v2.5-pro",  # OR Xiaomi CN, must go
@@ -136,7 +135,7 @@ class TestFilterCandidates:
         for cn in (
             "qwen/qwen3.6-max-preview",
             "qwen/qwen3.6-coder",
-            "z-ai/glm-4.6",
+            "z-ai/glm-5.1",
             "moonshotai/kimi-k2.6",
             "minimax/minimax-m2.7",
             "xiaomi/mimo-v2.5-pro",

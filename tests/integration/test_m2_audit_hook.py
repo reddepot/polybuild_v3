@@ -664,7 +664,7 @@ class TestCostLog:
         from polybuild.audit.cost_log import log_voice_call, read_cost_log
 
         log_voice_call(
-            "z-ai/glm-4.6",
+            "z-ai/glm-5.1",
             pool="chinese",
             commit_sha="abc1234",
             tokens_prompt=1000,
@@ -686,12 +686,12 @@ class TestCostLog:
         entries = read_cost_log(cost_dir=tmp_path)
         assert len(entries) == 2
         assert {e.voice_id for e in entries} == {
-            "z-ai/glm-4.6",
+            "z-ai/glm-5.1",
             "openai/gpt-5.5",
         }
-        # GLM cost: (1000 * 0.30 + 500 * 1.10) / 1e6 = 0.00085
-        glm = next(e for e in entries if e.voice_id == "z-ai/glm-4.6")
-        assert glm.estimated_usd == pytest.approx(0.00085, rel=1e-3)
+        # GLM 5.1 cost: (1000 * 0.50 + 500 * 2.00) / 1e6 = 0.0015
+        glm = next(e for e in entries if e.voice_id == "z-ai/glm-5.1")
+        assert glm.estimated_usd == pytest.approx(0.0015, rel=1e-3)
 
     def test_summarize_costs_empty(self, tmp_path: Path) -> None:
         from polybuild.audit.cost_log import summarize_costs

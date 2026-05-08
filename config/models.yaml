@@ -164,13 +164,6 @@ z-ai/glm-5.1:
   roles: [polylens_chinese_voice, audit_diversity]
   notes: "ZhipuAI GLM 5.1, dernière génération. Reasoning model — peut consommer beaucoup de tokens."
 
-z-ai/glm-4.6:
-  category: openrouter_optional
-  endpoint: "https://openrouter.ai/api/v1/chat/completions"
-  forces: [chinese_voice, stable, lower_reasoning_cost]
-  roles: [code_diversity, audit_alternative]
-  notes: "Plus stable que 5.1 reasoning, meilleur ROI pour code generation."
-
 qwen/qwen3.6-max-preview:
   category: openrouter_optional
   endpoint: "https://openrouter.ai/api/v1/chat/completions"

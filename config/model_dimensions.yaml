@@ -115,13 +115,6 @@ z-ai/glm-5.1:
   corpus_proxy: zhipu_corpus
   role_bias: reasoner_chinese
 
-z-ai/glm-4.6:
-  provider: zhipu
-  architecture: moe
-  alignment: balanced
-  corpus_proxy: zhipu_corpus
-  role_bias: code_diversity_cn
-
 qwen/qwen3.6-max-preview:
   provider: alibaba
   architecture: moe

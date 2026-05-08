@@ -44,7 +44,7 @@ def get_builder(voice_id: str) -> BuilderProtocol:
         - "kimi-k2.6"
         - "deepseek/deepseek-v4-pro" (OR), "deepseek/deepseek-v4-flash" (OR)
         - "x-ai/grok-4.20" (OR)
-        - "z-ai/glm-5.1" / "z-ai/glm-4.6" (OR — ZhipuAI 智谱)
+        - "z-ai/glm-5.1" (OR — ZhipuAI 智谱)
         - "qwen/qwen3.6-max-preview" / "qwen/qwen3.6-coder" (OR — Alibaba 阿里)
         - "moonshotai/kimi-k2.6" (OR — fallback when kimi CLI down)
         - "minimax/minimax-m2.7" (OR — MiniMax 稀宇科技)

@@ -32,7 +32,6 @@ _OPENROUTER_PRICING: dict[str, tuple[float, float]] = {
     "openai/gpt-5.5":               (3.00, 15.00),
     "google/gemini-3.1-pro-preview":(1.25,  5.00),
     "moonshotai/kimi-k2.6":         (0.40,  2.00),
-    "z-ai/glm-4.6":                 (0.30,  1.10),
     "z-ai/glm-5.1":                 (0.50,  2.00),
     "qwen/qwen3-max":               (1.20,  4.50),
     "qwen/qwen3.6-max-preview":     (1.20,  4.50),

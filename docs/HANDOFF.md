@@ -40,7 +40,7 @@ Quand tu fais `polybuild run --brief brief.md --profile module_standard_known --
 | **0b** | spec attack | Un challenger orthogonal cherche les ambiguïtés/trous dans la spec | DeepSeek (raisonnement transparent) |
 | **0c** | spec revise | Si Spec Attack a trouvé des trous critiques, Opus révise la spec | Claude Opus 4.7 |
 | **1** | voice selection | Choisit 3 voix pour Phase 2 selon la "diversité matrix" (provider, architecture, alignement, corpus) | Déterministe (table routing.yaml) |
-| **2** | parallel generation | 3 modèles écrivent du code en parallèle, chacun dans son worktree isolé | gpt-5.5 + kimi-k2.6 + glm-4.6 (par défaut) |
+| **2** | parallel generation | 3 modèles écrivent du code en parallèle, chacun dans son worktree isolé | gpt-5.5 + kimi-k2.6 + glm-5.1 (par défaut) |
 | **3** | scoring | Lance pytest/mypy/ruff/bandit/gitleaks/coverage sur chaque worktree, attribue un score | Déterministe (gates + formule) |
 | **3b** | grounding check | Vérifie que les imports correspondent à de vrais modules (pas d'hallucination de package) | AST parsing |
 | **4** | audit POLYLENS | 1 modèle d'une **famille différente du gagnant** fait un audit indépendant sur 7 axes (sécurité, qualité, tests, perf, archi, doc, adversarial) | Choisi par routing selon family du gagnant |

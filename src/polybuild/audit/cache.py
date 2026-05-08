@@ -1,6 +1,6 @@
 """Persistent LLM response cache (FEAT-3).
 
-Convergent /avis recommendation from gemini-3.1-pro + glm-4.6 — neither
+Convergent /avis recommendation from gemini-3.1-pro + glm-5.1 — neither
 was on the explicit candidate list but both ranked it top-5.
 
 Use case: developer iterating on the audit prompt. Without the cache,
