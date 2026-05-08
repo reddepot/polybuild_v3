@@ -173,7 +173,7 @@ def _patch_orchestrator(monkeypatch_attrs: list, sleep_ms: float) -> None:
 
     builder.generate = _builder_generate
 
-    def fake_get_builder(_voice_id: str):  # noqa: ANN202 — bench helper
+    def fake_get_builder(_voice_id: str) -> object:
         return builder
 
     monkeypatch_attrs.extend([
