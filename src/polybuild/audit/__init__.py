@@ -71,16 +71,32 @@ from polybuild.audit.rotation import (
 from polybuild.audit.rotation import (
     reset_rotation as reset_rotation,
 )
+from polybuild.audit.runner import (
+    DEFAULT_AXES as DEFAULT_AXES,
+)
+from polybuild.audit.runner import (
+    VoiceCaller as VoiceCaller,
+)
+from polybuild.audit.runner import (
+    audit_commit as audit_commit,
+)
+from polybuild.audit.runner import (
+    extract_commit_diff as extract_commit_diff,
+)
 
 __all__ = [
+    "DEFAULT_AXES",
     "AuditQueueEntry",
     "BacklogFinding",
     "QueueLock",
+    "VoiceCaller",
     "VoicePair",
     "append_findings",
     "append_queue_entry",
+    "audit_commit",
     "compute_fingerprint",
     "drain_queue",
+    "extract_commit_diff",
     "pick_voice_pair",
     "read_backlog",
     "read_queue",
