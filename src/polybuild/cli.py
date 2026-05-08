@@ -45,6 +45,32 @@ def version() -> None:
     console.print(f"POLYBUILD v{__version__}")
 
 
+def _build_consensus_strategy(scorer_name: str) -> PipelineStrategy:
+    """Build a ``ConsensusPipeline`` with the requested scorer (M2A.4).
+
+    Raises ``typer.BadParameter`` for unknown scorer names so the user
+    sees a clean CLI error rather than a stack trace. The DEVCODE
+    scorer is loaded lazily so callers that stick with the naive path
+    never pay the import cost.
+    """
+    if scorer_name == "naive":
+        return ConsensusPipeline()
+    if scorer_name == "devcode":
+        try:
+            from polybuild.scoring.devcode_scorer import DevcodeScorer
+        except ImportError as e:
+            raise typer.BadParameter(
+                "--scorer=devcode requires the optional [devcode] extra. "
+                "Install it with ``pip install -e \".[devcode]\"`` (devcode "
+                "lives at ~/Developer/projects/devcode by default — see "
+                "pyproject.toml)."
+            ) from e
+        return ConsensusPipeline(scorer=DevcodeScorer())
+    raise typer.BadParameter(
+        f"unknown --scorer={scorer_name!r}. Use 'naive' or 'devcode'."
+    )
+
+
 @app.command()
 def run(
     brief: Path = typer.Option(
@@ -73,9 +99,19 @@ def run(
         "--solo",
         help=(
             "Use the single-voice short-circuit pipeline (skip Phase 2/3/5 "
-            "consensus). Faster, cheaper, no parallel generation. "
-            "Implementation lands in M2B.2; until then ``--solo`` raises "
-            "NotImplementedError."
+            "consensus). Faster, cheaper, no parallel generation."
+        ),
+    ),
+    scorer: str = typer.Option(
+        "naive",
+        "--scorer",
+        help=(
+            "Phase 3 scoring strategy for the consensus pipeline. "
+            "``naive`` (default) keeps the historical gate-based scorer + "
+            "eligibility-filter winner selection. ``devcode`` enables "
+            "DEVCODE-Vote v1 arbitration (Schulze pondere bayesien Glicko-2). "
+            "Requires the optional ``[devcode]`` extra. Ignored when --solo "
+            "is set (solo skips Phase 3)."
         ),
     ),
 ) -> None:
@@ -92,13 +128,23 @@ def run(
     # Pick the pipeline strategy. ``run_polybuild`` defaults to
     # ConsensusPipeline when ``strategy=None``; we make the choice
     # explicit here so the CLI can echo it in the run banner.
-    strategy: PipelineStrategy = SoloPipeline() if solo else ConsensusPipeline()
+    if solo:
+        if scorer != "naive":
+            console.print(
+                f"[yellow]warning: --scorer={scorer} ignored "
+                "(solo mode skips Phase 3 scoring)[/yellow]"
+            )
+        strategy: PipelineStrategy = SoloPipeline()
+    else:
+        strategy = _build_consensus_strategy(scorer)
 
     console.print(f"[cyan]POLYBUILD v{__version__}[/cyan]")
     console.print(f"  Profile: {profile}")
     console.print(f"  Brief: {brief}")
     console.print(f"  Project: {project_root.absolute()}")
     console.print(f"  Strategy: {strategy.name}")
+    if not solo:
+        console.print(f"  Scorer: {scorer}")
     console.print(f"  Skip commit: {skip_commit}")
     console.print(f"  Skip smoke: {skip_smoke}")
     console.print()
