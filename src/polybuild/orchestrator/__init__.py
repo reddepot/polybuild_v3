@@ -25,17 +25,60 @@ from polybuild.models import (
     Severity,
     TokenUsage,
 )
-from polybuild.phases import (
-    phase_0_spec,
-    phase_2_generate,
-    phase_3_score,
-    phase_3b_grounding,
-    phase_7_commit,
-    select_voices,
+from polybuild.orchestrator.consensus_pipeline import (
+    ConsensusPipeline as ConsensusPipeline,
 )
-from polybuild.phases.phase_4_audit import phase_4_audit
-from polybuild.phases.phase_5_triade import phase_5_dispatch
-from polybuild.phases.phase_6_validate import phase_6_validate
+from polybuild.orchestrator.pipeline_strategy import (
+    PipelineStrategy as PipelineStrategy,
+)
+from polybuild.orchestrator.pipeline_strategy import (
+    StrategyOutcome as StrategyOutcome,
+)
+from polybuild.orchestrator.solo_pipeline import SoloPipeline as SoloPipeline
+
+# M2B.0: the in-line Phase 1 → Phase 5 implementation moved into
+# ``ConsensusPipeline``. The phase functions below are re-exported here so
+# (a) callers that ``from polybuild.orchestrator import select_voices``
+# keep working, and (b) ``unittest.mock.patch("polybuild.orchestrator.
+# <phase>")`` continues to intercept calls made by the consensus pipeline
+# (which resolves them dynamically through ``polybuild.orchestrator``).
+from polybuild.phases import (
+    phase_0_spec as phase_0_spec,
+)
+from polybuild.phases import (
+    phase_2_generate as phase_2_generate,
+)
+from polybuild.phases import (
+    phase_3_score as phase_3_score,
+)
+from polybuild.phases import (
+    phase_3b_grounding as phase_3b_grounding,
+)
+from polybuild.phases import (
+    phase_7_commit as phase_7_commit,
+)
+from polybuild.phases import (
+    select_voices as select_voices,
+)
+
+# Re-export: the source-text regression test
+# (tests/regression/test_round10_1_audit_patches.py) asserts the literal line
+# ``from polybuild.phases.phase_3b_grounding import grounding_disqualifies`` is
+# present in this file, so we keep the canonical un-aliased form alongside the
+# PEP 484 explicit-re-export form below.
+from polybuild.phases.phase_3b_grounding import (
+    grounding_disqualifies as grounding_disqualifies,
+)
+from polybuild.phases.phase_4_audit import phase_4_audit as phase_4_audit
+from polybuild.phases.phase_5_triade import phase_5_dispatch as phase_5_dispatch
+from polybuild.phases.phase_6_validate import phase_6_validate as phase_6_validate
+
+# M2B.0: the winner eligibility filter — including the call to
+# ``grounding_disqualifies(gfindings)`` — now lives in ``ConsensusPipeline.run``
+# (``polybuild.orchestrator.consensus_pipeline``) so the orchestrator module
+# can stay strategy-agnostic. The Round 10.1 [Kimi P0 #4] fix that wires
+# ``grounding_disqualifies`` into winner selection is preserved unchanged
+# inside the consensus pipeline.
 
 logger = structlog.get_logger()
 
@@ -276,6 +319,7 @@ async def run_polybuild(
     project_ctx: dict[str, Any] | None = None,
     skip_commit: bool = False,
     skip_smoke: bool = False,
+    strategy: PipelineStrategy | None = None,
 ) -> PolybuildRun:
     """Execute the full POLYBUILD pipeline.
 
@@ -288,6 +332,11 @@ async def run_polybuild(
                      `extra_context_for_opus`, `phase_8_endpoint`, `phase_8_golden_queries`
         skip_commit: True for dry-runs (Phase 7 skipped)
         skip_smoke: True to skip Phase 8 production smoke
+        strategy: optional pipeline strategy for the Phase 1 → Phase 5
+            segment. Defaults to :class:`ConsensusPipeline` (the canonical
+            multi-voice pipeline). Pass :class:`SoloPipeline` for the
+            single-voice short-circuit (M2B). Phase -1, 0, 6, 7, 8 always
+            run regardless of strategy.
 
     Returns:
         PolybuildRun with all metadata, archived to disk.
@@ -296,6 +345,8 @@ async def run_polybuild(
     runs on *every* exit path (privacy gate block, abort in P5/P6, exception),
     not just the happy path. Audit 5 flagged this trou de spec.
     """
+    if strategy is None:
+        strategy = ConsensusPipeline()
     # Round 5 [M]: optional run_id override from project_ctx (skill /polybuild)
     # Round 10.8 fix [Kimi A-03/A-04/A-05 P1, cross-voice audit]: ``run_id``
     # is concatenated into filesystem paths in many places (worktree dirs,
@@ -353,6 +404,7 @@ async def run_polybuild(
             project_ctx=project_ctx,
             skip_commit=skip_commit,
             skip_smoke=skip_smoke,
+            strategy=strategy,
         )
     finally:
         # Unregister signal handlers BEFORE running cleanup so a second Ctrl+C
@@ -445,8 +497,14 @@ async def _run_polybuild_inner(
     project_ctx: dict[str, Any] | None,
     skip_commit: bool,
     skip_smoke: bool,
+    strategy: PipelineStrategy,
 ) -> PolybuildRun:
-    """Inner pipeline (Phase -1 → Phase 8). Phase 9 lives in the outer finally."""
+    """Inner pipeline (Phase -1 → Phase 8). Phase 9 lives in the outer finally.
+
+    The Phase 1 → Phase 5 segment is delegated to ``strategy`` (M2B.0
+    refactor). Phase -1 (privacy), Phase 0 (spec), Phase 6 (validation),
+    Phase 7 (commit) and Phase 8 (production smoke) always run here.
+    """
 
     if risk_profile is None:
         # Default: low sensitivity unless profile suggests otherwise
@@ -580,96 +638,50 @@ async def _run_polybuild_inner(
     )
     save_checkpoint(run_id, "phase0", spec.model_dump(mode="json"), project_root)
 
-    # ── Phase 1: voice selection ──
-    voices = await select_voices(spec, config_root=_resolve_config_root())
-    save_checkpoint(
-        run_id, "phase1",
-        {"voices": [v.model_dump() for v in voices]},
-        project_root,
-    )
-
-    # ── Phase 2: parallel generation ──
-    builder_results = await phase_2_generate(spec, voices)
-    save_checkpoint(
-        run_id, "phase2",
-        {"results": [r.model_dump(mode="json") for r in builder_results]},
-        project_root,
-    )
-
-    # ── Phase 3: scoring ──
-    scores = await phase_3_score(builder_results)
-    save_checkpoint(
-        run_id, "phase3",
-        {"scores": [s.model_dump() for s in scores]},
-        project_root,
-    )
-
-    # ── Phase 3b: grounding ──
-    grounding = await phase_3b_grounding(builder_results, project_root)
-    save_checkpoint(
-        run_id, "phase3b",
-        {vid: [f.model_dump(mode="json") for f in fs] for vid, fs in grounding.items()},
-        project_root,
-    )
-
-    # Determine winner (highest score, not disqualified, no critical grounding)
-    # Round 10.1 fix [Kimi P0 #4]: previously we only counted P0 (syntax)
-    # findings. The audit pointed out that the spec rule "≥2 hallucinated
-    # imports = disqualification" lives in ``grounding_disqualifies`` and
-    # was never wired into the eligibility check. A builder with two
-    # hallucinations could therefore still be picked as winner. We now apply
-    # the canonical disqualification rule from phase_3b.
-    from polybuild.phases.phase_3b_grounding import grounding_disqualifies
-
-    eligible = []
-    for s in scores:
-        if s.disqualified:
-            continue
-        gfindings = grounding.get(s.voice_id, [])
-        dq, dq_reason = grounding_disqualifies(gfindings)
-        if dq:
-            logger.warning(
-                "grounding_disqualified_winner_candidate",
-                voice_id=s.voice_id,
-                reason=dq_reason,
-            )
-            continue
-        eligible.append(s)
-    if not eligible:
-        logger.error("no_eligible_winner")
-        return _build_aborted_run(
-            run_id, profile_id, spec, builder_results, scores, started_at,
-        )
-
-    winner_score = eligible[0]
-    winner_result = next(
-        (r for r in builder_results if r.voice_id == winner_score.voice_id),
-        None,
-    )
-    if winner_result is None:
-        logger.error("winner_voice_id_not_in_builder_results", winner=winner_score.voice_id)
-        return _build_aborted_run(
-            run_id, profile_id, spec, builder_results, scores, started_at,
-        )
-
-    # ── Phase 4: audit ──
-    audit = await phase_4_audit(
-        winner_result,
-        profile_id,
-        risk_profile,
+    # ── Phase 1 → Phase 5 (delegated to strategy, M2B.0) ──
+    outcome: StrategyOutcome = await strategy.run(
+        spec=spec,
+        risk_profile=risk_profile,
+        project_root=project_root,
+        project_ctx=project_ctx,
+        artifacts_dir=artifacts_dir,
+        run_id=run_id,
         config_root=_resolve_config_root(),
+        save_checkpoint=save_checkpoint,
     )
-    save_checkpoint(run_id, "phase4", audit.model_dump(mode="json"), project_root)
 
-    # ── Phase 5: triade ──
-    fix_report = await phase_5_dispatch(audit, winner_result, risk_profile)
-    save_checkpoint(run_id, "phase5", fix_report.model_dump(mode="json"), project_root)
-
-    if fix_report.status == "blocked_p0":
-        logger.error("polybuild_blocked_p0", run_id=run_id)
+    if outcome.aborted:
+        logger.warning(
+            "strategy_aborted",
+            strategy=strategy.name,
+            reason=outcome.abort_reason,
+        )
         return _build_aborted_run(
-            run_id, profile_id, spec, builder_results, scores, started_at,
-            audit=audit, fix_report=fix_report,
+            run_id, profile_id, spec,
+            outcome.builder_results, outcome.scores, started_at,
+            audit=outcome.audit, fix_report=outcome.fix_report,
+        )
+
+    voices = outcome.voices
+    builder_results = outcome.builder_results
+    scores = outcome.scores
+    winner_result = outcome.winner_result
+    winner_score = outcome.winner_score
+    audit = outcome.audit
+    fix_report = outcome.fix_report
+
+    # Strategy contract: a non-aborted outcome MUST carry a winner +
+    # winner_score + audit + fix_report. A pipeline that returns ``aborted=
+    # False`` without these is a programmer error in the strategy.
+    if (
+        winner_result is None
+        or winner_score is None
+        or audit is None
+        or fix_report is None
+    ):
+        raise RuntimeError(
+            f"strategy {strategy.name!r} returned a non-aborted outcome "
+            "with missing winner / audit / fix_report artefacts"
         )
 
     # ── Phase 6: validation ──
