@@ -158,6 +158,54 @@ Phase 8   Production smoke (5 min, golden queries, rollback auto)
 
 ---
 
+## Modes d'exécution : `--solo` vs consensus (M2B)
+
+Le segment **Phase 1 → Phase 5** ci-dessus est sélectionnable via une
+**Strategy**. Phase -1, 0, 6, 7, 8 et le cleanup tournent toujours,
+indépendamment du mode choisi.
+
+| Mode | Flag CLI | Phase 1 | Phase 2 | Phase 3 | Phase 3b | Phase 4 | Phase 5 |
+|---|---|---|---|---|---|---|---|
+| **Consensus** *(défaut)* | *(aucun)* | sélection multi-voix | génération **parallèle** N voix | scoring + classement | grounding AST | audit orthogonal | triade Critic/Fixer/Verifier |
+| **Solo** | `--solo` | voix unique configurée (Claude par défaut) | **1 voix**, pas de concurrency limiter | *skipped* — winner par construction, score stub | *skipped* | audit orthogonal *(conservé pour la sécurité)* | *skipped* — pas de boucle fix |
+
+### Quand utiliser `--solo`
+
+- **Cosmetic refactors / docs** où l'arbitrage multi-voix est un coût pur.
+- **Fast-feedback dev loops** : pas de boucle Phase 5, retour quasi instantané.
+- **Cost-sensitive runs** : 1 appel LLM au lieu de 3-5.
+
+### Quand garder le défaut consensus
+
+- **Module inédit critique** : le grounding AST + le scoring inter-voix sont la première barrière à la dette.
+- **Code médico-juridique opposable** : la triade Phase 5 est conçue pour ces cas.
+- **Tout sujet où une P0 est plausible** : `--solo` abort sur P0 audit (pas de fix loop), consensus la corrige automatiquement.
+
+### Comportement P0 en `--solo`
+
+Si Phase 4 surface une finding P0, le run **abort** avec la raison `solo_phase_4_p0_no_triade` et un hint pour relancer en mode consensus. La voix unique a produit du code que personne n'a corrigé — re-run sans `--solo` pour engager le triade Phase 5.
+
+### API Python
+
+```python
+from polybuild.orchestrator import run_polybuild, SoloPipeline, ConsensusPipeline
+
+# Défaut équivalent : strategy=ConsensusPipeline()
+await run_polybuild(brief="…", profile_id="…")
+
+# Solo avec Claude Opus 4.7 (défaut) :
+await run_polybuild(brief="…", profile_id="…", strategy=SoloPipeline())
+
+# Solo avec une autre voix (e.g. GPT-5.5) :
+await run_polybuild(
+    brief="…",
+    profile_id="…",
+    strategy=SoloPipeline(voice_id="gpt-5.5", family="openai"),
+)
+```
+
+---
+
 ## Stack technique imposée
 
 - Python 3.11+, asyncio, uv, ruff, mypy `--strict`, pytest, bandit, gitleaks
