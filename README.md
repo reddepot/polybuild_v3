@@ -206,6 +206,73 @@ await run_polybuild(
 
 ---
 
+## DEVCODE arbitrage optionnel : `--scorer=devcode` (M2A)
+
+À l'intérieur du mode consensus, le **scorer Phase 3** est une stratégie pluggable. Deux implémentations livrées :
+
+| Scorer | Flag CLI | Algorithme | Coût |
+|---|---|---|---|
+| **NaiveScorer** *(défaut)* | `--scorer=naive` | Gate score (pytest, mypy, ruff, bandit, gitleaks, coverage, diff_minimality) + filtre d'éligibilité | aucun (déjà la voie historique) |
+| **DevcodeScorer** | `--scorer=devcode` | DEVCODE-Vote v1 : Schulze pondéré bayésien Glicko-2 + pénalité cosinus anti-collusion + supermajorité cross-culturelle | extra optionnel `[devcode]` |
+
+### Quand utiliser `--scorer=devcode`
+
+- **≥3 voix actives** dans le profile (Schulze a besoin d'options à arbitrer ; en dessous de 2, DEVCODE abstient et le filtre naïf reprend la main).
+- **Code médico-juridique opposable** ou **module inédit critique** : la supermajorité cross-culturelle (P0/P1/P2 exigent ≥1 voix non-occidentale) et la pénalité anti-collusion ajoutent une couche de défense que le naïf n'a pas.
+- **Suivi longitudinal** : avec un `SQLiteReputationStore` persistant, la réputation Glicko-2 par voix × `domain` × `task_type` se calibre au fil des runs.
+
+### Quand garder le défaut `--scorer=naive`
+
+- **Iteration rapide** où la finesse Schulze ne change pas le verdict (toutes les voix convergent).
+- **Pas de devcode installé** : le scorer naïf ne dépend que des deps de base de POLYBUILD.
+
+### Installation
+
+```bash
+# 1. devcode v1.0 doit être disponible (sibling project, pas encore sur PyPI) :
+pip install -e ~/Developer/projects/devcode
+
+# 2. activer l'extra polybuild :
+pip install -e ".[devcode]"
+
+# 3. vérifier :
+polybuild run --brief brief.md --profile module_inedit_critique --scorer=devcode
+```
+
+L'absence du paquet `devcode` à l'invocation `--scorer=devcode` produit une `typer.BadParameter` claire pointant sur la commande d'install — le pipeline naïf reste utilisable sans devcode.
+
+### API Python
+
+```python
+from polybuild.orchestrator import run_polybuild, ConsensusPipeline
+from polybuild.scoring.devcode_scorer import DevcodeScorer
+from devcode.reputation_sqlite import SQLiteReputationStore
+
+# Défaut : NaiveScorer
+await run_polybuild(brief="…", profile_id="…")
+
+# DEVCODE arbitrage avec store en mémoire (no persistence) :
+await run_polybuild(
+    brief="…",
+    profile_id="…",
+    strategy=ConsensusPipeline(scorer=DevcodeScorer()),
+)
+
+# DEVCODE arbitrage avec store SQLite persistant (calibration Glicko-2) :
+store = SQLiteReputationStore("/Users/me/.polybuild/reputation.db")
+await run_polybuild(
+    brief="…",
+    profile_id="…",
+    strategy=ConsensusPipeline(scorer=DevcodeScorer(store=store)),
+)
+```
+
+### Comportement winner
+
+`DevcodeScorer.score()` renvoie un `ScoredResult` contenant `winner_voice_id` (le gagnant Schulze, traduit en `voice_id` POLYBUILD) plus la `confidence` et le drapeau `requires_polylens_review` issus de `Decision`. La `ConsensusPipeline` honore ce gagnant **sauf si** Phase 3b grounding le disqualifie (≥2 imports hallucinés) — dans ce cas elle retombe sur le filtre d'éligibilité naïf.
+
+---
+
 ## Stack technique imposée
 
 - Python 3.11+, asyncio, uv, ruff, mypy `--strict`, pytest, bandit, gitleaks
