@@ -23,6 +23,7 @@ from rich.console import Console
 from rich.table import Table
 
 from polybuild import __version__
+from polybuild.audit.cli import audit_app
 from polybuild.orchestrator import (
     ConsensusPipeline,
     PipelineStrategy,
@@ -31,6 +32,7 @@ from polybuild.orchestrator import (
 )
 
 app = typer.Typer(help="POLYBUILD v3 — Multi-LLM orchestrated code generation")
+app.add_typer(audit_app, name="audit")
 console = Console()
 
 
