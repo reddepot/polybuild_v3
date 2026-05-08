@@ -146,6 +146,14 @@ warn_return_any = true
 module = ["sqlite_vec.*", "ollama.*", "edsnlp.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# devcode v1.0 ships without a ``py.typed`` marker (it is a closed library
+# we consume via the optional ``[devcode]`` extra — see M2A.3). Treat its
+# public API as untyped at the strict-mypy boundary so the polybuild
+# project keeps building while devcode adopts py.typed upstream.
+module = ["devcode", "devcode.*"]
+ignore_missing_imports = true
+
 # ──────────────────────────────────────────────────
 # PYTEST
 # ──────────────────────────────────────────────────
