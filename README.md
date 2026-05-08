@@ -273,6 +273,71 @@ await run_polybuild(
 
 ---
 
+## POLYLENS audit asynchrone optionnel (M2C)
+
+Hook `post-commit` qui lance un audit POLYLENS **asynchrone et non-bloquant** sur chaque commit, sur les axes A (sécurité) + C (tests) + G (adversarial). Anti-monoculture par construction : chaque audit utilise un binôme **1 voix occidentale + 1 voix chinoise** sélectionnées en round-robin (anti-pattern POLYLENS #20).
+
+### Installation du hook
+
+```bash
+# 1. Activer l'extra audit (déjà inclus dans deps de base) :
+pip install -e ".[dev]"
+
+# 2. Installer le hook git post-commit dans le repo courant :
+scripts/install_audit_hook.sh
+
+# 3. Vérifier :
+polybuild audit status
+```
+
+### Comportement
+
+À chaque commit :
+1. **Enqueue synchrone** (~5 ms) : SHA + repo path + branche → `~/.polybuild/audit/audit_queue.jsonl` (append fcntl-locked).
+2. **Drain détaché** (nohup + &) : `polybuild audit drain` consomme la queue en arrière-plan. Pour chaque entrée, sélectionne 1W+1CN voix → diff ≤200 lignes → audit parallèle avec timeout 30s/voix → parse JSON-Lines → notifications.
+
+### Notifications
+
+| Sévérité | Surface |
+|---|---|
+| **P0 / P1** | Banner macOS (`osascript`) → fallback stderr + append backlog |
+| **P2 / P3** | Append backlog uniquement (visible via `polybuild audit digest`) |
+
+Les findings sont **dédupliqués** sur fingerprint `(commit_sha, file, line, axis, normalized_message)` avec une fenêtre glissante de 7 jours. Une voix flaky qui re-émet le même finding ne re-page pas l'utilisateur.
+
+### Désactivation
+
+```bash
+# Per-commit :
+POLYBUILD_AUDIT_ENABLED=0 git commit ...
+
+# Repo-wide :
+git config polybuild.audit-enabled false
+
+# Désinstaller :
+scripts/install_audit_hook.sh --uninstall
+```
+
+### Commandes
+
+```bash
+polybuild audit status                        # queue + backlog snapshot
+polybuild audit drain                         # consume queue (foreground)
+polybuild audit dry-run                       # consume queue, no LLM, no persist
+polybuild audit digest --since=yesterday      # markdown summary
+polybuild audit configure rotation            # show pools + next pair
+polybuild audit configure rotation --reset    # rewind rotation
+polybuild audit enqueue --sha <SHA> --repo .  # manual enqueue (used by hook)
+```
+
+### Garde-fous
+
+- **Toujours non-bloquant** : un échec à n'importe quelle étape (enqueue, drain, voix down, network error, JSON malformé) ne fait jamais échouer `git commit`. Les paths d'erreur retournent silencieusement.
+- **Plafond coût** : `MAX_DIFF_LINES=200` + `VOICE_TIMEOUT_S=30` + 2 voix max → ~$0.30 par audit (cible plan §M2C.2).
+- **Anti-monoculture** : pool W (codex / gemini / kimi CLI) + pool CN (z-ai/glm / qwen / minimax / xiaomi / qwen-coder via OpenRouter), rotation round-robin sur chaque pool indépendamment.
+
+---
+
 ## Stack technique imposée
 
 - Python 3.11+, asyncio, uv, ruff, mypy `--strict`, pytest, bandit, gitleaks
