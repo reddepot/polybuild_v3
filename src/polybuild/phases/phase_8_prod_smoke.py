@@ -496,16 +496,34 @@ def phase_9_cleanup(
                 except OSError as e:
                     report["errors"].append(f"rmtree_failed: {e}")
 
-    # 3. Clean uv cache (best-effort, non-blocking)
+    # 3. Clean uv cache (best-effort, non-blocking).
+    # M2B.0 follow-up: ``uv cache clean`` deadlocks for minutes when invoked as
+    # a subprocess under an outer ``uv run`` (the parent holds a cache lock the
+    # child waits on). Skip the call entirely when ``UV_RUN_RECURSION`` /
+    # ``VIRTUAL_ENV`` indicate we are inside a ``uv run`` invocation, and add a
+    # short timeout as a defence-in-depth for any other deadlock cause. A slow
+    # / locked uv cache leaves ``uv_cache_cleaned=False`` in the report and an
+    # informative entry in ``errors`` instead of blocking phase 9.
     uv_bin = shutil.which("uv")
-    if uv_bin:
+    inside_uv_run = (
+        os.environ.get("UV_RUN_RECURSION_DEPTH") is not None
+        or os.environ.get("VIRTUAL_ENV") is not None
+    )
+    if uv_bin and not inside_uv_run:
         try:
             rc = subprocess.run(  # noqa: S603 — args list, binary resolved
-                [uv_bin, "cache", "clean"], capture_output=True, check=False
+                [uv_bin, "cache", "clean"],
+                capture_output=True,
+                check=False,
+                timeout=10,
             ).returncode
             report["uv_cache_cleaned"] = rc == 0
         except FileNotFoundError:
             pass
+        except subprocess.TimeoutExpired:
+            report["errors"].append("uv_cache_clean_timeout")
+    elif inside_uv_run:
+        report["errors"].append("uv_cache_clean_skipped_inside_uv_run")
 
     logger.info("phase_9_cleanup_done", run_id=run_id, **report)
     return report
