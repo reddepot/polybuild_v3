@@ -270,7 +270,7 @@ nvtx = [
 
 [[package]]
 name = "devcode"
-version = "1.0.0"
+version = "1.0.2"
 source = { directory = "/Users/radu/Developer/projects/devcode" }
 dependencies = [
     { name = "numpy" },
@@ -1109,7 +1109,7 @@ wheels = [
 
 [[package]]
 name = "polybuild-core"
-version = "3.1.1"
+version = "3.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

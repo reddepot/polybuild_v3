@@ -45,15 +45,16 @@ from typing import TYPE_CHECKING
 from polybuild.models import PrivacyLevel, Status
 
 if TYPE_CHECKING:
-    from devcode.models import DecisionContext, Vote
+    from devcode.models import DecisionContext, OptionId, Vote
 
     from polybuild.models import BuilderResult, Spec, VoiceScore
-
-
-# DEVCODE's ``OptionId`` is ``TypeAlias = int``; we use plain ``int``
-# locally so the POLYBUILD boundary stays fully typed even when
-# ``devcode`` is not installed at module load time.
-OptionId = int
+else:
+    # Runtime fallback for the type alias when ``devcode`` is not
+    # installed (the optional ``[devcode]`` extra is missing). Module-
+    # level annotations evaluate strings under ``from __future__ import
+    # annotations``, so this path only matters for runtime ``isinstance``
+    # / ``OptionId(value)`` calls — which we don't make.
+    OptionId = int
 
 
 # POLYBUILD family strings → DEVCODE ``Family`` enum value. Stored as
