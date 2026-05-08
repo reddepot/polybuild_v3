@@ -76,8 +76,21 @@ def _build_consensus_strategy(scorer_name: str) -> PipelineStrategy:
                 "pyproject.toml)."
             ) from e
         return ConsensusPipeline(scorer=scorer)
+    if scorer_name == "devcode-shadow":
+        # FEAT-2: shadow scorer always returns NaiveScorer's winner (no
+        # behavior change) and logs DEVCODE divergence to
+        # ``~/.polybuild/audit/scorer_shadow.jsonl`` for calibration.
+        try:
+            from polybuild.scoring.shadow_scorer import ShadowScorer
+        except ImportError as e:
+            raise typer.BadParameter(
+                "--scorer=devcode-shadow requires the optional [devcode] "
+                "extra. Install it with ``pip install -e \".[devcode]\"``."
+            ) from e
+        return ConsensusPipeline(scorer=ShadowScorer())
     raise typer.BadParameter(
-        f"unknown --scorer={scorer_name!r}. Use 'naive' or 'devcode'."
+        f"unknown --scorer={scorer_name!r}. "
+        "Use 'naive', 'devcode' or 'devcode-shadow'."
     )
 
 
@@ -120,8 +133,11 @@ def run(
             "``naive`` (default) keeps the historical gate-based scorer + "
             "eligibility-filter winner selection. ``devcode`` enables "
             "DEVCODE-Vote v1 arbitration (Schulze pondere bayesien Glicko-2). "
-            "Requires the optional ``[devcode]`` extra. Ignored when --solo "
-            "is set (solo skips Phase 3)."
+            "``devcode-shadow`` runs both in parallel — naive picks the "
+            "live winner, DEVCODE divergences logged to "
+            "~/.polybuild/audit/scorer_shadow.jsonl for calibration. "
+            "Requires the optional ``[devcode]`` extra for the latter two. "
+            "Ignored when --solo is set (solo skips Phase 3)."
         ),
     ),
 ) -> None:

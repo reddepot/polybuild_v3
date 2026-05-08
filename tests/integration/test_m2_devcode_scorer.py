@@ -298,6 +298,104 @@ class TestDevcodeAdapter:
 # ────────────────────────────────────────────────────────────────
 
 
+class TestShadowScorer:
+    @pytest.mark.asyncio
+    async def test_shadow_returns_naive_and_logs_devcode(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """ShadowScorer always returns Naive's result; logs DEVCODE divergence."""
+        from polybuild.scoring.shadow_scorer import (
+            ShadowDivergence,
+            ShadowScorer,
+            shadow_log_path,
+        )
+
+        results = [
+            _make_result("claude-opus-4.7", "anthropic"),
+            _make_result("gpt-5.5", "openai"),
+        ]
+        naive_scores = [
+            _make_voice_score("claude-opus-4.7", 95.0),
+            _make_voice_score("gpt-5.5", 85.0),
+        ]
+
+        # Mock the naive scorer to return canned scores.
+        async def _fake_naive_score(self, _r, _s):  # type: ignore[no-untyped-def]
+            return ScoredResult(
+                voice_scores=naive_scores,
+                winner_voice_id=None,
+                confidence=0.95,
+                scorer_name="naive",
+            )
+
+        monkeypatch.setattr(NaiveScorer, "score", _fake_naive_score)
+
+        # Mock DEVCODE to claim a different winner (gpt-5.5 instead of claude).
+        class _FakeDevcode:
+            async def score(self, _r, _s):  # type: ignore[no-untyped-def]
+                return ScoredResult(
+                    voice_scores=naive_scores,
+                    winner_voice_id="gpt-5.5",
+                    confidence=0.62,
+                    requires_polylens_review=False,
+                    scorer_name="devcode",
+                )
+
+        scorer = ShadowScorer(
+            devcode_factory=lambda: _FakeDevcode(),
+            shadow_dir=tmp_path,
+        )
+        out = await scorer.score(results, _make_spec())
+
+        # Live winner = naive (abstains, pipeline picks top score = claude).
+        assert out.scorer_name == "devcode_shadow"
+        assert out.winner_voice_id is None  # naive abstains
+        assert out.debug_data["devcode_winner_voice_id"] == "gpt-5.5"
+
+        # Shadow log contains one ShadowDivergence record marked diverged.
+        log = shadow_log_path(tmp_path).read_text()
+        record = ShadowDivergence.model_validate_json(log.strip())
+        assert record.naive_winner == "claude-opus-4.7"
+        assert record.devcode_winner == "gpt-5.5"
+        assert record.diverged is True
+
+    @pytest.mark.asyncio
+    async def test_shadow_swallows_devcode_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A DEVCODE exception MUST NOT impact the live pipeline."""
+        from polybuild.scoring.shadow_scorer import ShadowScorer
+
+        async def _fake_naive_score(self, _r, _s):  # type: ignore[no-untyped-def]
+            return ScoredResult(
+                voice_scores=[_make_voice_score("claude-opus-4.7", 90.0)],
+                winner_voice_id=None,
+                confidence=0.9,
+                scorer_name="naive",
+            )
+
+        monkeypatch.setattr(NaiveScorer, "score", _fake_naive_score)
+
+        class _BoomScorer:
+            async def score(self, _r, _s):  # type: ignore[no-untyped-def]
+                raise RuntimeError("devcode kaboom")
+
+        scorer = ShadowScorer(
+            devcode_factory=lambda: _BoomScorer(),
+            shadow_dir=tmp_path,
+        )
+        out = await scorer.score(
+            [_make_result("claude-opus-4.7", "anthropic")], _make_spec()
+        )
+        # Naive result still returned; debug shows DEVCODE absent.
+        assert out.confidence == 0.9
+        assert out.debug_data["devcode_winner_voice_id"] is None
+
+
 @pytest.mark.slow
 class TestDevcodeScorerE2E:
     @pytest.mark.asyncio

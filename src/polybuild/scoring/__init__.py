@@ -20,6 +20,7 @@ from polybuild.scoring.protocol import (
 from polybuild.scoring.protocol import (
     ScorerProtocol as ScorerProtocol,
 )
+from polybuild.scoring.shadow_scorer import ShadowScorer as ShadowScorer
 
 
 def _load_devcode_scorer():  # type: ignore[no-untyped-def]
@@ -35,4 +36,10 @@ def _load_devcode_scorer():  # type: ignore[no-untyped-def]
     return DevcodeScorer
 
 
-__all__ = ["NaiveScorer", "ScoredResult", "ScorerProtocol", "_load_devcode_scorer"]
+__all__ = [
+    "NaiveScorer",
+    "ScoredResult",
+    "ScorerProtocol",
+    "ShadowScorer",
+    "_load_devcode_scorer",
+]
