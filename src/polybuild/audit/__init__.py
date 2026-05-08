@@ -66,6 +66,9 @@ from polybuild.audit.queue import (
     drain_queue as drain_queue,
 )
 from polybuild.audit.queue import (
+    mark_entry_processed as mark_entry_processed,
+)
+from polybuild.audit.queue import (
     read_queue as read_queue,
 )
 from polybuild.audit.rotation import (
@@ -104,6 +107,7 @@ __all__ = [
     "compute_fingerprint",
     "drain_queue",
     "extract_commit_diff",
+    "mark_entry_processed",
     "notify_findings",
     "pick_voice_pair",
     "read_backlog",

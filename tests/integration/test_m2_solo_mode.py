@@ -269,15 +269,27 @@ class TestSoloPipelineAbortPaths:
 
 
 class TestStrategyOutcome:
-    def test_default_factories(self) -> None:
-        outcome = StrategyOutcome(voices=[], builder_results=[], scores=[])
+    def test_default_factories_on_aborted_path(self) -> None:
+        # POLYLENS-FIX-9 P2: a non-aborted outcome MUST carry winners; an
+        # aborted outcome may have any combination, so exercise defaults
+        # via the abort path.
+        outcome = StrategyOutcome(
+            voices=[], builder_results=[], scores=[],
+            aborted=True, abort_reason="test",
+        )
         assert outcome.grounding == {}
         assert outcome.winner_result is None
         assert outcome.audit is None
-        assert outcome.aborted is False
-        assert outcome.abort_reason is None
+        assert outcome.aborted is True
+
+    def test_validator_rejects_non_aborted_without_winner(self) -> None:
+        with pytest.raises(ValueError, match="missing winner artefacts"):
+            StrategyOutcome(voices=[], builder_results=[], scores=[])
 
     def test_is_frozen(self) -> None:
-        outcome = StrategyOutcome(voices=[], builder_results=[], scores=[])
+        outcome = StrategyOutcome(
+            voices=[], builder_results=[], scores=[],
+            aborted=True, abort_reason="t",
+        )
         with pytest.raises((AttributeError, Exception)):
             outcome.aborted = True  # type: ignore[misc]

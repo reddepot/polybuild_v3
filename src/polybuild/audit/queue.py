@@ -52,6 +52,12 @@ def audit_dir(override: Path | None = None) -> Path:
 
     The directory is created lazily (mode 0700) so first-time use after
     install does not require manual setup.
+
+    POLYLENS-FIX-8 P1: ``Path.mkdir(mode=0o700)`` only applies the mode
+    to a freshly created directory. If the directory already existed
+    (e.g. user ran an older polybuild that created it 0o755), the mode
+    bits stayed permissive. We unconditionally chmod the resolved path
+    to 0o700 so a re-run normalises the permissions.
     """
     if override is not None:
         target = override
@@ -59,6 +65,12 @@ def audit_dir(override: Path | None = None) -> Path:
         env = os.environ.get("POLYBUILD_AUDIT_DIR")
         target = Path(env) if env else DEFAULT_AUDIT_DIR
     target.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Force-tighten if the directory pre-existed with looser perms.
+    # Best-effort: any OSError (e.g. directory belongs to a different
+    # user, read-only filesystem) is swallowed — the audit pipeline
+    # never blocks on cosmetic perm issues.
+    with contextlib.suppress(OSError):
+        target.chmod(0o700)
     return target
 
 
@@ -206,31 +218,68 @@ def read_queue(
 def drain_queue(
     queue_dir: Path | None = None,
 ) -> Iterator[AuditQueueEntry]:
-    """Iterate over the queue and clear it atomically.
+    """Return the current queue contents WITHOUT removing them.
 
-    The drain holds the exclusive lock for the entire iteration: callers
-    process entries one by one inside the with-block. After the iterator
-    exhausts, the queue file is truncated. If the caller raises mid-
-    iteration the file is left untouched (so the next drain replays).
+    POLYLENS-FIX-3 P1 — replay safety. The previous version truncated
+    the file before the caller iterated, so a crash mid-processing
+    silently lost every unprocessed entry. The new contract:
+
+      * ``drain_queue`` is now a snapshot read (alias of
+        :func:`read_queue` for legacy callers).
+      * Callers MUST call :func:`mark_entry_processed` after each
+        successful audit. That function removes only that specific
+        entry from the queue file under the exclusive lock.
+      * On crash mid-processing, the unprocessed entries remain in
+        the queue and the next ``polybuild audit drain`` replays them.
+        The 7-day dedup window in :mod:`polybuild.audit.backlog`
+        prevents a successfully-processed-but-not-yet-marked entry
+        from being audited twice in any meaningful way.
+    """
+    return iter(read_queue(queue_dir))
+
+
+def mark_entry_processed(
+    entry: AuditQueueEntry,
+    queue_dir: Path | None = None,
+) -> bool:
+    """Remove ``entry`` from the queue file under exclusive lock.
+
+    Matching is by ``(commit_sha, enqueued_at)`` — the same key
+    :func:`drain_queue` would use for replay. Idempotent: removing an
+    already-removed entry returns ``False`` without raising.
+
+    Returns ``True`` when the entry was found and removed, ``False``
+    otherwise (queue empty, file missing, no match).
     """
     qpath = queue_path(queue_dir)
     if not qpath.exists():
-        return iter(())
+        return False
 
-    entries = read_queue(queue_dir)
-    if not entries:
-        return iter(())
-
-    # We re-acquire the lock here because read_queue() released it.
-    # The rare race (a second writer slipping an entry in between) is
-    # benign: that entry stays in the queue for the next drain.
+    target = (entry.commit_sha, entry.enqueued_at)
+    removed = False
     with QueueLock(lock_path(queue_dir)):
-        # Truncate first so the next writer doesn't append to entries
-        # we have already extracted. If a fresh writer beats us to the
-        # lock here we simply lose its event for this cycle, which is
-        # accepted (the next drain picks it up).
-        qpath.write_text("", encoding="utf-8")
-    return iter(entries)
+        if not qpath.exists():
+            return False
+        survivors: list[str] = []
+        for line in qpath.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                e = AuditQueueEntry.model_validate_json(line)
+            except (ValueError, json.JSONDecodeError):
+                survivors.append(line)
+                continue
+            if (e.commit_sha, e.enqueued_at) == target and not removed:
+                removed = True
+                continue
+            survivors.append(line)
+
+        if survivors:
+            qpath.write_text("\n".join(survivors) + "\n", encoding="utf-8")
+        else:
+            qpath.write_text("", encoding="utf-8")
+
+    return removed
 
 
 __all__ = [
@@ -241,6 +290,7 @@ __all__ = [
     "audit_dir",
     "drain_queue",
     "lock_path",
+    "mark_entry_processed",
     "queue_path",
     "read_queue",
 ]

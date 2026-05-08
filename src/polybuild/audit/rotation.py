@@ -40,6 +40,18 @@ from polybuild.audit.queue import QueueLock, audit_dir, lock_path
 # ────────────────────────────────────────────────────────────────
 # Voice pool (anti-pattern #23: immutable, no user override)
 # ────────────────────────────────────────────────────────────────
+#
+# POLYLENS-WONTFIX rationale: a POLYLENS run on M2 (z-ai/glm-4.6, axis
+# E_architecture, P1) suggested moving these pools to a configuration
+# file with runtime validation and schema versioning. We REJECT this
+# recommendation because POLYLENS v3 anti-pattern #23 ("voice
+# substitution outside pool") explicitly forbids user-configurable
+# voice pools — the whole point of the immutable panel is that an
+# operator cannot accidentally (or deliberately) downgrade audit
+# diversity by editing a YAML. Pool changes are a code-level decision,
+# tracked in version control, peer-reviewed via POLYLENS itself, and
+# never an environment knob. See ``feedback_polylens_method.md`` §4
+# anti-pattern #23 for the broader reasoning.
 
 # Western pool — the 4-voice base panel from POLYLENS v3 ('panel base
 # 4 voix occidentales IMMUABLE'). Codex GPT-5.5 + Kimi K2.6 are most

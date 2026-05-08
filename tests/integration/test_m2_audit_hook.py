@@ -56,7 +56,9 @@ class TestQueue:
         assert loaded[0].commit_sha == "abc1234"
         assert loaded[0].branch == "main"
 
-    def test_drain_clears_queue(self, tmp_path: Path) -> None:
+    def test_drain_returns_entries_without_truncating(self, tmp_path: Path) -> None:
+        # POLYLENS-FIX-3 P1: drain_queue is now a snapshot read; entries
+        # remain in the queue until ``mark_entry_processed`` removes them.
         for sha in ("aaaaaaa", "bbbbbbb", "ccccccc"):
             append_queue_entry(
                 AuditQueueEntry(commit_sha=sha, repo_path=tmp_path),
@@ -64,8 +66,44 @@ class TestQueue:
             )
         drained = list(drain_queue(queue_dir=tmp_path))
         assert [e.commit_sha for e in drained] == ["aaaaaaa", "bbbbbbb", "ccccccc"]
-        # Queue is empty after a successful drain.
-        assert read_queue(queue_dir=tmp_path) == []
+        # Queue is NOT cleared by drain_queue alone — entries persist for
+        # replay if the caller crashes mid-processing.
+        assert len(read_queue(queue_dir=tmp_path)) == 3
+
+    def test_mark_entry_processed_removes_one(self, tmp_path: Path) -> None:
+        from polybuild.audit import mark_entry_processed
+
+        entries = [
+            AuditQueueEntry(commit_sha=sha, repo_path=tmp_path)
+            for sha in ("aaaaaaa", "bbbbbbb", "ccccccc")
+        ]
+        for e in entries:
+            append_queue_entry(e, queue_dir=tmp_path)
+
+        # Mark only the middle one processed. The other two stay.
+        assert mark_entry_processed(entries[1], queue_dir=tmp_path) is True
+        remaining = read_queue(queue_dir=tmp_path)
+        assert [e.commit_sha for e in remaining] == ["aaaaaaa", "ccccccc"]
+
+        # Marking the same entry again is a no-op (idempotent).
+        assert mark_entry_processed(entries[1], queue_dir=tmp_path) is False
+
+    def test_drain_replay_safety_on_caller_crash(self, tmp_path: Path) -> None:
+        from polybuild.audit import mark_entry_processed
+
+        for sha in ("aaaaaaa", "bbbbbbb", "ccccccc"):
+            append_queue_entry(
+                AuditQueueEntry(commit_sha=sha, repo_path=tmp_path),
+                queue_dir=tmp_path,
+            )
+        # Simulate a caller crash mid-iteration: we drain, mark one,
+        # then "crash" without marking the others.
+        drained = list(drain_queue(queue_dir=tmp_path))
+        mark_entry_processed(drained[0], queue_dir=tmp_path)
+        # raise RuntimeError("simulate crash") would happen here.
+        # On the next drain, the un-marked entries are still available.
+        survivors = read_queue(queue_dir=tmp_path)
+        assert {e.commit_sha for e in survivors} == {"bbbbbbb", "ccccccc"}
 
     def test_malformed_lines_skipped(self, tmp_path: Path) -> None:
         # Manually inject a bad line alongside a valid one.
@@ -193,8 +231,23 @@ class TestRotation:
 def _make_voice_caller(
     western_output: str = "",
     chinese_output: str = "",
+    *,
+    inject_canary: bool = True,
 ) -> Callable[[str, str], Awaitable[str]]:
-    """Build a voice-caller mock that returns canned text per pool."""
+    """Build a voice-caller mock that returns canned text per pool.
+
+    POLYLENS-FIX-2 P1: the runner now requires every voice response to
+    echo ``_AUDIT_CANARY``; we auto-append it so existing fixtures stay
+    valid. Tests that exercise the canary-missing path pass
+    ``inject_canary=False`` explicitly.
+    """
+    from polybuild.audit.runner import _AUDIT_CANARY
+
+    if inject_canary:
+        if western_output and _AUDIT_CANARY not in western_output:
+            western_output = western_output.rstrip("\n") + "\n" + _AUDIT_CANARY
+        if chinese_output and _AUDIT_CANARY not in chinese_output:
+            chinese_output = chinese_output.rstrip("\n") + "\n" + _AUDIT_CANARY
 
     async def _caller(voice_id: str, _prompt: str) -> str:
         if voice_id in WESTERN_VOICES:
@@ -258,6 +311,40 @@ class TestRunner:
         voices = {f.voice for f in findings}
         assert any(v in WESTERN_VOICES for v in voices)
         assert any(v in CHINESE_VOICES for v in voices)
+
+    @pytest.mark.asyncio
+    async def test_canary_missing_discards_all_findings(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """POLYLENS-FIX-2 P1: a response without the canary is treated as
+        evidence of prompt-injection — all findings dropped."""
+        entry = AuditQueueEntry(commit_sha="cafebab", repo_path=tmp_path)
+        monkeypatch.setattr(
+            "polybuild.audit.runner.extract_commit_diff",
+            _stub_diff("--- a/x\n+++ b/x\n+x"),
+        )
+        # Voices respond with valid JSON-Lines but FORGET the canary
+        # (simulating a successful prompt injection). Findings discarded.
+        valid_json = json.dumps(
+            {
+                "axis": "A_security",
+                "severity": "P0",
+                "file": "src/x.py",
+                "line": 1,
+                "message": "would be a real finding",
+            }
+        )
+        caller = _make_voice_caller(
+            western_output=valid_json,
+            chinese_output=valid_json,
+            inject_canary=False,
+        )
+        findings = await audit_commit(
+            entry, voice_caller=caller, state_dir=tmp_path
+        )
+        assert findings == []
 
     @pytest.mark.asyncio
     async def test_garbage_output_returns_no_findings(

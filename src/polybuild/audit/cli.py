@@ -26,7 +26,7 @@ from rich.table import Table
 
 from polybuild.audit.backlog import read_backlog
 from polybuild.audit.notifier import build_digest, notify_findings
-from polybuild.audit.queue import drain_queue, read_queue
+from polybuild.audit.queue import drain_queue, mark_entry_processed, read_queue
 from polybuild.audit.rotation import (
     CHINESE_VOICES,
     WESTERN_VOICES,
@@ -122,6 +122,11 @@ async def _drain_async(*, persist: bool) -> None:
             counts = notify_findings(findings, persist=persist)
             for sev, count in counts.items():
                 counts_total[sev] = counts_total.get(sev, 0) + count
+        # POLYLENS-FIX-3 P1: only mark this entry processed AFTER the
+        # full audit + notification pipeline completed without raising.
+        # If we crashed above, the entry stays in the queue and the
+        # next ``polybuild audit drain`` will replay it.
+        mark_entry_processed(entry)
 
     table = Table(title=f"Drain summary ({len(entries)} commit(s))")
     table.add_column("Severity", style="cyan")

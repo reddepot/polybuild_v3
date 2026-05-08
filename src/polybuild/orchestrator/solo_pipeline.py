@@ -165,16 +165,40 @@ class SoloPipeline:
             project_root,
         )
 
-        # ── Phase 3b: grounding SKIPPED in solo. ──
-        # The eligibility filter that uses grounding only matters when
-        # there are multiple candidates to disqualify between. With one
-        # candidate, grounding violations would just abort the run with
-        # no fallback — better to surface them via Phase 4 audit instead.
+        # ── Phase 3b: grounding (KEPT — POLYLENS-FIX-5 P1). ──
+        # Earlier versions skipped grounding in solo mode; gpt-5.5
+        # POLYLENS audit flagged this as P1 because hallucinated imports
+        # would slip past Phase 4 audit too (Phase 4 doesn't re-run
+        # ``grounding_disqualifies``). Solo now runs Phase 3b on the
+        # single candidate and aborts when ≥2 hallucinations are found,
+        # mirroring the consensus pipeline's eligibility filter.
+        grounding = await _orch.phase_3b_grounding([builder_result], project_root)
         save_checkpoint(
             run_id, "phase3b",
-            {"grounding": {}, "skipped": True, "strategy": self.name},
+            {vid: [f.model_dump(mode="json") for f in fs]
+             for vid, fs in grounding.items()},
             project_root,
         )
+        gfindings = grounding.get(builder_result.voice_id, [])
+        dq, dq_reason = _orch.grounding_disqualifies(gfindings)
+        if dq:
+            logger.error(
+                "solo_phase_3b_grounding_disqualified",
+                run_id=run_id,
+                voice_id=builder_result.voice_id,
+                reason=dq_reason,
+                hint="Re-run in consensus mode to engage multi-voice arbitration.",
+            )
+            return StrategyOutcome(
+                voices=[voice],
+                builder_results=[builder_result],
+                scores=[stub_score],
+                grounding=grounding,
+                winner_result=builder_result,
+                winner_score=stub_score,
+                aborted=True,
+                abort_reason=f"solo_phase_3b_disqualified:{dq_reason}",
+            )
 
         # ── Phase 4: audit (KEPT — safety check on the single candidate). ──
         audit = await _orch.phase_4_audit(
@@ -204,6 +228,7 @@ class SoloPipeline:
                 voices=[voice],
                 builder_results=[builder_result],
                 scores=[stub_score],
+                grounding=grounding,
                 winner_result=builder_result,
                 winner_score=stub_score,
                 audit=audit,
@@ -224,6 +249,7 @@ class SoloPipeline:
             voices=[voice],
             builder_results=[builder_result],
             scores=[stub_score],
+            grounding=grounding,
             winner_result=builder_result,
             winner_score=stub_score,
             audit=audit,

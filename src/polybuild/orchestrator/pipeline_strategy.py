@@ -60,6 +60,13 @@ class StrategyOutcome:
     eligible candidate, Phase 5 returned ``blocked_p0``, etc.). The
     orchestrator never inspects the strategy beyond what this dataclass
     exposes.
+
+    POLYLENS-FIX-9 P2: a ``__post_init__`` validator enforces the
+    contract — when ``aborted=False``, ``winner_result`` and
+    ``winner_score`` MUST be present (the orchestrator already checks
+    this defensively but having the invariant on the dataclass itself
+    catches programmer errors at construction time, with a clearer
+    traceback than a downstream attribute access).
     """
 
     voices: list[VoiceConfig]
@@ -72,6 +79,25 @@ class StrategyOutcome:
     fix_report: FixReport | None = None
     aborted: bool = False
     abort_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.aborted:
+            return  # any combination is allowed on the abort path
+        missing = [
+            name
+            for name, value in (
+                ("winner_result", self.winner_result),
+                ("winner_score", self.winner_score),
+            )
+            if value is None
+        ]
+        if missing:
+            raise ValueError(
+                "StrategyOutcome contract violation: aborted=False "
+                f"but missing winner artefacts: {missing}. A strategy "
+                "that cannot pick a winner MUST set aborted=True with "
+                "an abort_reason."
+            )
 
 
 class PipelineStrategy(Protocol):

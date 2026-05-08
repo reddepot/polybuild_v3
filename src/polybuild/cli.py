@@ -58,8 +58,16 @@ def _build_consensus_strategy(scorer_name: str) -> PipelineStrategy:
     if scorer_name == "naive":
         return ConsensusPipeline()
     if scorer_name == "devcode":
+        # POLYLENS-FIX-7 P2: ``DevcodeScorer.__init__`` itself imports
+        # ``devcode.reputation`` to build the default in-memory store, so
+        # an ImportError can also escape at instantiation time. Wrap both
+        # the module import AND the constructor call in the same
+        # BadParameter-producing try/except so the CLI never leaks a
+        # raw traceback when the optional extra is missing.
         try:
             from polybuild.scoring.devcode_scorer import DevcodeScorer
+
+            scorer = DevcodeScorer()
         except ImportError as e:
             raise typer.BadParameter(
                 "--scorer=devcode requires the optional [devcode] extra. "
@@ -67,7 +75,7 @@ def _build_consensus_strategy(scorer_name: str) -> PipelineStrategy:
                 "lives at ~/Developer/projects/devcode by default — see "
                 "pyproject.toml)."
             ) from e
-        return ConsensusPipeline(scorer=DevcodeScorer())
+        return ConsensusPipeline(scorer=scorer)
     raise typer.BadParameter(
         f"unknown --scorer={scorer_name!r}. Use 'naive' or 'devcode'."
     )
