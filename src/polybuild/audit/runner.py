@@ -236,8 +236,34 @@ async def _call_openrouter(voice_id: str, prompt: str) -> str:
     remote audit not opted-in via ``POLYBUILD_AUDIT_REMOTE_OPT_IN=1`` —
     the audit subsystem treats remote voices as opt-in to prevent
     accidental code leakage on sensitive repos).
+
+    FEAT-1: every successful or failed call is logged to the cost log
+    (``~/.polybuild/audit/cost_log.jsonl``) so the user can review
+    monthly OpenRouter spend per voice via ``polybuild audit cost``.
     """
     import os
+    import time
+
+    from polybuild.audit.cost_log import log_voice_call
+
+    t0 = time.monotonic()
+
+    def _log_cost(
+        *,
+        tokens_prompt: int | None = None,
+        tokens_completion: int | None = None,
+        success: bool = False,
+    ) -> None:
+        with contextlib.suppress(OSError, ValueError):
+            log_voice_call(
+                voice_id,
+                pool="chinese",
+                commit_sha=None,  # not threaded through here yet
+                tokens_prompt=tokens_prompt,
+                tokens_completion=tokens_completion,
+                latency_s=time.monotonic() - t0,
+                success=success,
+            )
 
     if not _is_remote_audit_allowed():
         logger.info(
@@ -254,6 +280,7 @@ async def _call_openrouter(voice_id: str, prompt: str) -> str:
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         logger.warning("audit_openrouter_no_key", voice_id=voice_id)
+        _log_cost(success=False)
         return ""
 
     try:
@@ -283,16 +310,26 @@ async def _call_openrouter(voice_id: str, prompt: str) -> str:
                 voice_id=voice_id,
                 status=resp.status_code,
             )
+            _log_cost(success=False)
             return ""
         data = resp.json()
         choices = data.get("choices", [])
         if not choices:
+            _log_cost(success=False)
             return ""
         text = choices[0].get("message", {}).get("content", "")
         if not isinstance(text, str):
+            _log_cost(success=False)
             return ""
+        usage = data.get("usage") or {}
+        _log_cost(
+            tokens_prompt=usage.get("prompt_tokens"),
+            tokens_completion=usage.get("completion_tokens"),
+            success=True,
+        )
         return text
     except (httpx.HTTPError, ValueError, KeyError):
+        _log_cost(success=False)
         return ""
 
 

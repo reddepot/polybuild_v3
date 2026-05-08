@@ -556,6 +556,65 @@ class TestNotifier:
         assert any("P1" in title for title, _ in called_with)
 
 
+class TestCostLog:
+    def test_estimate_usd_known_voice(self) -> None:
+        from polybuild.audit.cost_log import estimate_usd
+
+        # Known voice: 1M in @ $1.25 + 1M out @ $5 = $6.25
+        usd = estimate_usd("google/gemini-3.1-pro-preview", 1_000_000, 1_000_000)
+        assert usd == pytest.approx(6.25, rel=1e-3)
+
+    def test_estimate_usd_unknown_voice_returns_zero(self) -> None:
+        from polybuild.audit.cost_log import estimate_usd
+
+        assert estimate_usd("totally/unknown", 100, 200) == 0.0
+
+    def test_estimate_usd_missing_tokens(self) -> None:
+        from polybuild.audit.cost_log import estimate_usd
+
+        assert estimate_usd("openai/gpt-5.5", None, 100) == 0.0
+        assert estimate_usd("openai/gpt-5.5", 100, None) == 0.0
+
+    def test_log_voice_call_appends(self, tmp_path: Path) -> None:
+        from polybuild.audit.cost_log import log_voice_call, read_cost_log
+
+        log_voice_call(
+            "z-ai/glm-4.6",
+            pool="chinese",
+            commit_sha="abc1234",
+            tokens_prompt=1000,
+            tokens_completion=500,
+            latency_s=2.5,
+            success=True,
+            cost_dir=tmp_path,
+        )
+        log_voice_call(
+            "openai/gpt-5.5",
+            pool="western",
+            commit_sha="abc1234",
+            tokens_prompt=2000,
+            tokens_completion=1000,
+            latency_s=4.0,
+            success=False,
+            cost_dir=tmp_path,
+        )
+        entries = read_cost_log(cost_dir=tmp_path)
+        assert len(entries) == 2
+        assert {e.voice_id for e in entries} == {
+            "z-ai/glm-4.6",
+            "openai/gpt-5.5",
+        }
+        # GLM cost: (1000 * 0.30 + 500 * 1.10) / 1e6 = 0.00085
+        glm = next(e for e in entries if e.voice_id == "z-ai/glm-4.6")
+        assert glm.estimated_usd == pytest.approx(0.00085, rel=1e-3)
+
+    def test_summarize_costs_empty(self, tmp_path: Path) -> None:
+        from polybuild.audit.cost_log import summarize_costs
+
+        out = summarize_costs(window="week", cost_dir=tmp_path)
+        assert out == "no audit calls in window"
+
+
 class TestDigest:
     def test_digest_empty_window(self, tmp_path: Path) -> None:
         from polybuild.audit.notifier import build_digest

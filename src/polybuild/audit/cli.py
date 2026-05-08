@@ -25,6 +25,7 @@ from rich.console import Console
 from rich.table import Table
 
 from polybuild.audit.backlog import read_backlog
+from polybuild.audit.cost_log import summarize_costs
 from polybuild.audit.notifier import build_digest, notify_findings
 from polybuild.audit.queue import drain_queue, mark_entry_processed, read_queue
 from polybuild.audit.rotation import (
@@ -181,6 +182,35 @@ def cmd_digest(
         )
     window: Literal["yesterday", "week", "month"] = since  # type: ignore[assignment]
     text = build_digest(since=window)
+    console.print(text)
+
+
+# ────────────────────────────────────────────────────────────────
+# COST
+# ────────────────────────────────────────────────────────────────
+
+
+@audit_app.command("cost")
+def cmd_cost(
+    since: Annotated[
+        str,
+        typer.Option("--since", help="yesterday | week | month | all"),
+    ] = "week",
+) -> None:
+    """Print a per-voice cost summary for the chosen window.
+
+    Western voices (codex / gemini / kimi via local CLI) ride on the
+    user's existing subscription and have $0 marginal cost — they do
+    not appear in this log. The summary covers OpenRouter (Chinese)
+    voices only.
+    """
+    if since not in ("yesterday", "week", "month", "all"):
+        raise typer.BadParameter(
+            f"invalid --since={since!r}. Use 'yesterday', 'week', "
+            "'month' or 'all'."
+        )
+    window: Literal["yesterday", "week", "month", "all"] = since  # type: ignore[assignment]
+    text = summarize_costs(window=window)
     console.print(text)
 
 
