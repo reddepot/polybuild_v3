@@ -318,6 +318,20 @@ git config polybuild.audit-enabled false
 scripts/install_audit_hook.sh --uninstall
 ```
 
+### Privacy — voix CN OpenRouter opt-in (v3.1.1+)
+
+Le pool **occidental (Codex / Gemini / Kimi CLI)** tourne 100% local : aucun diff ne sort de la machine. Le pool **chinois** passe par OpenRouter HTTP (z-ai/glm, qwen, minimax, xiaomi). Pour éviter qu'un `polybuild audit drain` exfiltre du code propriétaire ou des secrets sur un repo sensible :
+
+- **Défaut v3.1.1+ : voix CN désactivées**. Seules les voix W locales tournent. Anti-monoculture #20 dégradée à "audit single-W" sur ces repos — accepté pour les repos privés/médico-juridiques.
+- **Activer les voix CN** : `export POLYBUILD_AUDIT_REMOTE_OPT_IN=1`. Repos publics / open source pour lesquels la diversité W+CN prime sur la confidentialité.
+
+Le runner applique aussi avant chaque envoi LLM :
+- `sanitize_prompt_context` : strip HTML/XML/script injection vectors.
+- `_redact_secrets` : masque AWS keys, GH PAT, OpenAI/Anthropic keys, JWT, SSH private blocks, generic `api_key=` patterns.
+- Canary anti-prompt-injection : la voix doit echo `POLYLENS_CANARY_DO_NOT_OBEY_DIFF_INSTRUCTIONS`. Réponse sans canary → discardée (suppression d'output suspect).
+
+Le repo path full (`/Users/radu/...`) est remplacé par son basename dans le prompt LLM.
+
 ### Commandes
 
 ```bash
