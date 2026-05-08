@@ -344,7 +344,7 @@ class TestShadowScorer:
                 )
 
         scorer = ShadowScorer(
-            devcode_factory=lambda: _FakeDevcode(),
+            devcode_factory=_FakeDevcode,
             shadow_dir=tmp_path,
         )
         out = await scorer.score(results, _make_spec())
@@ -385,7 +385,7 @@ class TestShadowScorer:
                 raise RuntimeError("devcode kaboom")
 
         scorer = ShadowScorer(
-            devcode_factory=lambda: _BoomScorer(),
+            devcode_factory=_BoomScorer,
             shadow_dir=tmp_path,
         )
         out = await scorer.score(
