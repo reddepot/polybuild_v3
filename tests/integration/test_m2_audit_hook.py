@@ -556,6 +556,91 @@ class TestNotifier:
         assert any("P1" in title for title, _ in called_with)
 
 
+class TestLLMCache:
+    def test_cache_key_deterministic(self) -> None:
+        from polybuild.audit.cache import make_cache_key
+
+        a = make_cache_key("codex-gpt-5.5", "prompt body")
+        b = make_cache_key("codex-gpt-5.5", "prompt body")
+        assert a == b
+
+    def test_cache_key_sensitive_to_voice(self) -> None:
+        from polybuild.audit.cache import make_cache_key
+
+        a = make_cache_key("codex-gpt-5.5", "p")
+        b = make_cache_key("kimi-k2.6", "p")
+        assert a != b
+
+    def test_cache_key_sensitive_to_prompt(self) -> None:
+        from polybuild.audit.cache import make_cache_key
+
+        a = make_cache_key("codex-gpt-5.5", "p1")
+        b = make_cache_key("codex-gpt-5.5", "p2")
+        assert a != b
+
+    def test_cache_key_sensitive_to_params(self) -> None:
+        from polybuild.audit.cache import make_cache_key
+
+        a = make_cache_key("codex-gpt-5.5", "p", {"max_tokens": 100})
+        b = make_cache_key("codex-gpt-5.5", "p", {"max_tokens": 200})
+        assert a != b
+        # Order-insensitive params
+        c = make_cache_key("codex-gpt-5.5", "p", {"x": 1, "y": 2})
+        d = make_cache_key("codex-gpt-5.5", "p", {"y": 2, "x": 1})
+        assert c == d
+
+    def test_cache_get_put_roundtrip(self, tmp_path: Path) -> None:
+        from polybuild.audit.cache import cache_get, cache_put, make_cache_key
+
+        key = make_cache_key("codex-gpt-5.5", "test prompt")
+        # Miss before put.
+        assert cache_get(key, cache_dir=tmp_path) is None
+        cache_put(
+            key,
+            voice_id="codex-gpt-5.5",
+            response="cached output",
+            tokens_total=1500,
+            latency_s=12.3,
+            cache_dir=tmp_path,
+        )
+        # Hit after put.
+        assert cache_get(key, cache_dir=tmp_path) == "cached output"
+
+    def test_cache_disabled_via_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from polybuild.audit.cache import cache_get, cache_put, make_cache_key
+
+        # Put a value normally.
+        key = make_cache_key("codex-gpt-5.5", "test")
+        cache_put(key, voice_id="codex-gpt-5.5", response="x", cache_dir=tmp_path)
+        # Then disable: get returns None even though the value is there.
+        monkeypatch.setenv("POLYBUILD_LLM_CACHE_DISABLE", "1")
+        assert cache_get(key, cache_dir=tmp_path) is None
+
+    def test_cache_stats_and_clear(self, tmp_path: Path) -> None:
+        from polybuild.audit.cache import (
+            cache_clear,
+            cache_put,
+            cache_stats,
+            make_cache_key,
+        )
+
+        for i in range(3):
+            cache_put(
+                make_cache_key("codex-gpt-5.5", f"p{i}"),
+                voice_id="codex-gpt-5.5",
+                response="r",
+                cache_dir=tmp_path,
+            )
+        stats = cache_stats(cache_dir=tmp_path)
+        assert stats["rows"] == 3
+        assert stats["voices"] == 1
+        cleared = cache_clear(cache_dir=tmp_path)
+        assert cleared == 3
+        assert cache_stats(cache_dir=tmp_path)["rows"] == 0
+
+
 class TestCostLog:
     def test_estimate_usd_known_voice(self) -> None:
         from polybuild.audit.cost_log import estimate_usd

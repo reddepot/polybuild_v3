@@ -154,13 +154,31 @@ async def default_voice_caller(voice_id: str, prompt: str) -> str:
     Returns an empty string on any failure (timeout, non-zero exit,
     network error). A failed voice produces no findings — the rotation
     will reach the next one on the next audit cycle.
+
+    FEAT-3: a persistent SQLite-backed response cache wraps both
+    branches. Cache hit returns the previous response in microseconds;
+    cache miss falls through to the upstream call and the response is
+    stored on success. Set ``POLYBUILD_LLM_CACHE_DISABLE=1`` to bypass.
     """
+    from polybuild.audit.cache import cache_get, cache_put, make_cache_key
+
+    cache_key = make_cache_key(voice_id, prompt)
+    cached = cache_get(cache_key)
+    if cached is not None:
+        logger.debug("audit_cache_hit", voice_id=voice_id, key_first_8=cache_key[:8])
+        return cached
+
     if voice_id.startswith(("codex-", "gemini-", "kimi-")):
-        return await _call_western_cli(voice_id, prompt)
-    if "/" in voice_id:  # OpenRouter slug (provider/model form)
-        return await _call_openrouter(voice_id, prompt)
-    logger.warning("audit_voice_unknown", voice_id=voice_id)
-    return ""
+        response = await _call_western_cli(voice_id, prompt)
+    elif "/" in voice_id:  # OpenRouter slug (provider/model form)
+        response = await _call_openrouter(voice_id, prompt)
+    else:
+        logger.warning("audit_voice_unknown", voice_id=voice_id)
+        return ""
+
+    if response:
+        cache_put(cache_key, voice_id=voice_id, response=response)
+    return response
 
 
 def _western_cli_command(voice_id: str) -> list[str] | None:

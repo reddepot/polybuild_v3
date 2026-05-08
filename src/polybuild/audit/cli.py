@@ -186,6 +186,42 @@ def cmd_digest(
 
 
 # ────────────────────────────────────────────────────────────────
+# CACHE
+# ────────────────────────────────────────────────────────────────
+
+
+@audit_app.command("cache")
+def cmd_cache(
+    action: Annotated[
+        str,
+        typer.Argument(help="stats | clear"),
+    ] = "stats",
+) -> None:
+    """Inspect or clear the persistent LLM response cache (FEAT-3).
+
+    ``stats``  → row count, distinct voices, size on disk.
+    ``clear``  → wipe every entry (vacuum).
+    """
+    from polybuild.audit.cache import cache_clear, cache_stats
+
+    if action == "stats":
+        stats = cache_stats()
+        table = Table(title="LLM response cache")
+        table.add_column("Field", style="cyan")
+        table.add_column("Value", justify="right")
+        for k, v in stats.items():
+            table.add_row(k, str(v))
+        console.print(table)
+    elif action == "clear":
+        n = cache_clear()
+        console.print(f"[yellow]cache cleared[/yellow]: {n} entries removed")
+    else:
+        raise typer.BadParameter(
+            f"unknown action {action!r}. Use 'stats' or 'clear'."
+        )
+
+
+# ────────────────────────────────────────────────────────────────
 # COST
 # ────────────────────────────────────────────────────────────────
 
