@@ -62,7 +62,7 @@ class GroundingEngine:
         try:
             import tomllib
         except ImportError:
-            import tomli as tomllib  # type: ignore[no-redef]
+            import tomli as tomllib  # type: ignore[no-redef,import-not-found]
 
         with pyproject.open("rb") as f:
             data = tomllib.load(f)
