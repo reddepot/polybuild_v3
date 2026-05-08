@@ -111,11 +111,11 @@ class TestParseOutputAndEstimateMetrics:
             functions_count=3,
         )
 
-        # Seul Claude lit self_metrics.json du disque ; les autres extraient du JSON raw
-        if voice_id.startswith("claude-"):
-            (worktree / "self_metrics.json").write_text(metrics.model_dump_json())
-            result = builder._parse_output("{}", worktree, cfg, duration=1.0)
-        elif hasattr(builder, "_parse_output"):
+        # Round 10.8 prod-launch refactor : claude CLI v2 ne write plus
+        # self_metrics.json sur disque (CLI v2 = stdout text only). Tous
+        # les adapters CLI extraient désormais self_metrics depuis le
+        # JSON stdout via _try_parse_json + data.get("self_metrics").
+        if hasattr(builder, "_parse_output"):
             payload = json.dumps({"files_written": [], "self_metrics": metrics.model_dump()})
             result = builder._parse_output(payload, worktree, cfg, duration=1.0)
         else:
