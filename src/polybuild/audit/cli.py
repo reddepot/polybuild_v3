@@ -43,6 +43,48 @@ console = Console()
 
 
 # ────────────────────────────────────────────────────────────────
+# ENQUEUE
+# ────────────────────────────────────────────────────────────────
+
+
+@audit_app.command("enqueue")
+def cmd_enqueue(
+    sha: Annotated[
+        str,
+        typer.Option("--sha", help="Commit SHA to enqueue."),
+    ],
+    repo: Annotated[
+        str,
+        typer.Option("--repo", help="Absolute repo path."),
+    ] = ".",
+    branch: Annotated[
+        str | None,
+        typer.Option("--branch", help="Branch name (informational)."),
+    ] = None,
+) -> None:
+    """Append a single commit to the audit queue.
+
+    Used by the post-commit git hook (``scripts/install_audit_hook.sh``)
+    immediately after a commit lands. Safe to call repeatedly with the
+    same SHA — drain dedups via the backlog 7-day window, so a duplicate
+    enqueue at most wastes one audit cycle.
+    """
+    from pathlib import Path
+
+    from polybuild.audit.queue import AuditQueueEntry, append_queue_entry
+
+    entry = AuditQueueEntry(
+        commit_sha=sha,
+        repo_path=Path(repo).resolve(),
+        branch=branch,
+    )
+    append_queue_entry(entry)
+    console.print(
+        f"[green]enqueued[/green] {sha[:12]} ({entry.repo_path})"
+    )
+
+
+# ────────────────────────────────────────────────────────────────
 # DRAIN
 # ────────────────────────────────────────────────────────────────
 
