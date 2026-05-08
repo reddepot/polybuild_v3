@@ -1,20 +1,23 @@
-"""Solo pipeline — single-voice short-circuit (skeleton).
+"""Solo pipeline — single-voice short-circuit (M2B.2).
 
-Created in M2B.0 as a placeholder so the strategy routing in
-:mod:`polybuild.orchestrator` is exercised end-to-end without committing
-to a particular implementation. The real body lands in **M2B.2** and
-will:
+Skips the consensus-only phases (Phase 2 parallel generation, Phase 3
+scoring, Phase 5 critic-fixer-verifier triade) and runs a single
+configured adapter end-to-end. Phase -1 (privacy), Phase 0 (spec),
+Phase 4 (audit), Phase 6 (validation), Phase 7 (commit), Phase 8
+(production smoke) and Phase 9 (cleanup) all still run via the
+top-level orchestrator — the strategy only controls Phase 1 → Phase 5.
 
-* skip Phase 1 (voice selection) and pick a single configured adapter
-  (default: Claude Code),
-* skip Phase 2 (parallel generation) by invoking ``_run_single_voice``,
-* skip Phase 3 (scoring) and Phase 5 (triade fix) — the single
-  candidate is the winner by construction,
-* still call Phase 6 (validation gates) and Phase 7 (commit) via the
-  top-level orchestrator.
+Use cases:
+  * one-shot iterations where multi-voice arbitrage is overkill
+    (cosmetic refactors, doc updates, simple bug fixes),
+  * cost-sensitive runs (1 LLM call vs 3-5),
+  * fast-feedback dev loops (no Phase 5 fix iterations).
 
-Until then any caller that explicitly opts into the solo strategy gets
-a clear ``NotImplementedError`` rather than silent fallback behaviour.
+Trade-offs:
+  * No cross-voice disagreement signal → less robust on edge cases.
+  * No automatic P0 fix loop → on a Phase 4 P0 finding the run aborts
+    rather than dispatching the triade. Re-run in consensus mode
+    (default) to recover.
 """
 
 from __future__ import annotations
@@ -22,6 +25,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import structlog
+
+from polybuild.models import (
+    FixReport,
+    GateResults,
+    Severity,
+    Status,
+    VoiceConfig,
+    VoiceScore,
+)
 from polybuild.orchestrator.pipeline_strategy import (
     CheckpointFn,
     StrategyOutcome,
@@ -30,11 +43,36 @@ from polybuild.orchestrator.pipeline_strategy import (
 if TYPE_CHECKING:
     from polybuild.models import RiskProfile, Spec
 
+logger = structlog.get_logger()
+
+
+# Default builder for the solo pipeline. Anthropic Claude Code CLI is the most
+# capable single-voice adapter available locally (no third-party API key
+# required). Constructor accepts an override for tests and CLI customisation.
+_DEFAULT_VOICE_ID = "claude-opus-4.7"
+_DEFAULT_FAMILY = "anthropic"
+
 
 class SoloPipeline:
-    """Placeholder for the single-voice pipeline. Body delivered in M2B.2."""
+    """Single-voice pipeline used when ``run_polybuild(strategy=SoloPipeline())``
+    or ``polybuild run --solo`` is invoked.
+
+    Constructor parameters allow callers to pick a different adapter when
+    Claude is unavailable or when the task profile suggests another voice
+    (e.g. Codex GPT-5.5 for low-level optimisation work).
+    """
 
     name = "solo"
+
+    def __init__(
+        self,
+        voice_id: str = _DEFAULT_VOICE_ID,
+        family: str = _DEFAULT_FAMILY,
+        timeout_sec: int = 720,
+    ) -> None:
+        self.voice_id = voice_id
+        self.family = family
+        self.timeout_sec = timeout_sec
 
     async def run(
         self,
@@ -48,19 +86,148 @@ class SoloPipeline:
         config_root: Path,
         save_checkpoint: CheckpointFn,
     ) -> StrategyOutcome:
-        del (
-            spec,
-            risk_profile,
-            project_root,
-            project_ctx,
-            artifacts_dir,
-            run_id,
-            config_root,
-            save_checkpoint,
+        del project_ctx, artifacts_dir  # not used; kept for protocol parity
+
+        # Late attribute lookup so test code that calls
+        # ``mock.patch("polybuild.orchestrator.<phase>", ...)`` still
+        # intercepts the calls — same trick as ConsensusPipeline.
+        import polybuild.orchestrator as _orch
+
+        # ── Phase 1: voice selection (single voice, no Phase 1 algorithm) ──
+        voice = VoiceConfig(
+            voice_id=self.voice_id,
+            family=self.family,
+            role="builder",
+            timeout_sec=self.timeout_sec,
         )
-        raise NotImplementedError(
-            "SoloPipeline is a placeholder for M2B.0 (Strategy Pattern "
-            "refactor). Full implementation lands in M2B.2."
+        save_checkpoint(
+            run_id, "phase1",
+            {"voices": [voice.model_dump()], "strategy": self.name},
+            project_root,
+        )
+
+        # ── Phase 2: single-voice generation (no parallel, no limiter) ──
+        from polybuild.adapters import get_builder
+
+        builder = get_builder(voice.voice_id)
+        logger.info(
+            "solo_phase_2_start",
+            run_id=run_id,
+            voice_id=voice.voice_id,
+        )
+        builder_result = await builder.generate(spec, voice)
+        save_checkpoint(
+            run_id, "phase2",
+            {"results": [builder_result.model_dump(mode="json")],
+             "strategy": self.name},
+            project_root,
+        )
+
+        if builder_result.status != Status.OK:
+            logger.error(
+                "solo_phase_2_voice_failed",
+                voice_id=voice.voice_id,
+                status=builder_result.status,
+                error=builder_result.error,
+            )
+            return StrategyOutcome(
+                voices=[voice],
+                builder_results=[builder_result],
+                scores=[],
+                aborted=True,
+                abort_reason=f"solo_voice_failed:{builder_result.status}",
+            )
+
+        # ── Phase 3: scoring SKIPPED — single voice is the winner. ──
+        # Stub a VoiceScore with empty gates so downstream code that
+        # iterates ``scores`` (PolybuildRun aggregation) keeps working.
+        # ``score=1.0`` reflects "no comparison available", not an actual
+        # quality verdict.
+        stub_score = VoiceScore(
+            voice_id=voice.voice_id,
+            score=1.0,
+            gates=GateResults(
+                acceptance_pass_ratio=0.0,
+                bandit_clean=True,
+                mypy_strict_clean=True,
+                ruff_clean=True,
+                coverage_score=0.0,
+                gitleaks_clean=True,
+                gitleaks_findings_count=0,
+                diff_minimality=1.0,
+            ),
+            disqualified=False,
+        )
+        save_checkpoint(
+            run_id, "phase3",
+            {"scores": [stub_score.model_dump()], "skipped": True,
+             "strategy": self.name},
+            project_root,
+        )
+
+        # ── Phase 3b: grounding SKIPPED in solo. ──
+        # The eligibility filter that uses grounding only matters when
+        # there are multiple candidates to disqualify between. With one
+        # candidate, grounding violations would just abort the run with
+        # no fallback — better to surface them via Phase 4 audit instead.
+        save_checkpoint(
+            run_id, "phase3b",
+            {"grounding": {}, "skipped": True, "strategy": self.name},
+            project_root,
+        )
+
+        # ── Phase 4: audit (KEPT — safety check on the single candidate). ──
+        audit = await _orch.phase_4_audit(
+            builder_result,
+            spec.profile_id,
+            risk_profile,
+            config_root=config_root,
+        )
+        save_checkpoint(
+            run_id, "phase4",
+            audit.model_dump(mode="json"),
+            project_root,
+        )
+
+        # Solo cannot run the triade fix loop, so a Phase 4 P0 finding is
+        # unrecoverable — abort and let the user re-run with the
+        # consensus pipeline (which would dispatch Phase 5 to fix it).
+        p0_findings = [f for f in audit.findings if f.severity == Severity.P0]
+        if p0_findings:
+            logger.error(
+                "solo_phase_4_p0_unrecoverable",
+                run_id=run_id,
+                p0_count=len(p0_findings),
+                hint="Re-run in consensus mode (default) to engage the Phase 5 fix loop.",
+            )
+            return StrategyOutcome(
+                voices=[voice],
+                builder_results=[builder_result],
+                scores=[stub_score],
+                winner_result=builder_result,
+                winner_score=stub_score,
+                audit=audit,
+                aborted=True,
+                abort_reason="solo_phase_4_p0_no_triade",
+            )
+
+        # ── Phase 5: triade SKIPPED in solo. Stub a completed FixReport. ──
+        fix_report = FixReport(status="completed", results=[])
+        save_checkpoint(
+            run_id, "phase5",
+            {"fix_report": fix_report.model_dump(mode="json"),
+             "skipped": True, "strategy": self.name},
+            project_root,
+        )
+
+        return StrategyOutcome(
+            voices=[voice],
+            builder_results=[builder_result],
+            scores=[stub_score],
+            winner_result=builder_result,
+            winner_score=stub_score,
+            audit=audit,
+            fix_report=fix_report,
         )
 
 
