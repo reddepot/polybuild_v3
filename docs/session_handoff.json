@@ -11,10 +11,10 @@
   },
   "session_parallel": {
     "claude_session_id": "d5c45d2b",
-    "current_task": "M2B.0 refacto Strategy Pattern",
+    "current_task": "M2B complete — moving to M2A.0",
     "status": "in_progress",
     "branch": "feat/m2-devcode-integration",
-    "completed_tasks": [],
+    "completed_tasks": ["M2B.0", "M2B.1", "M2B.2", "M2B.3", "M2B.4"],
     "blocked_on": null,
     "started_at": "2026-05-08T15:30:00Z"
   },
@@ -40,14 +40,54 @@
       "base_sha": "f7c8bf9"
     },
     {
-      "timestamp": "2026-05-08T15:50:00Z",
+      "timestamp": "2026-05-08T15:55:00Z",
       "session": "parallel",
-      "event": "M2B.0 strategy modules created (pipeline_strategy + consensus_pipeline + solo_pipeline)",
-      "files": [
-        "src/polybuild/orchestrator/pipeline_strategy.py",
-        "src/polybuild/orchestrator/consensus_pipeline.py",
-        "src/polybuild/orchestrator/solo_pipeline.py"
-      ]
+      "event": "fix(phase-9) timeout + skip-inside-uv-run on uv cache clean",
+      "sha": "a49bf1f"
+    },
+    {
+      "timestamp": "2026-05-08T15:56:00Z",
+      "session": "parallel",
+      "event": "test: round 10.8 follow-up CLI v2 self_metrics migration",
+      "sha": "9bdfeb4"
+    },
+    {
+      "timestamp": "2026-05-08T15:58:00Z",
+      "session": "parallel",
+      "event": "M2B.0 — Strategy Pattern extracted from _run_polybuild_inner",
+      "sha": "0eae40f",
+      "loc_added_src": 394
+    },
+    {
+      "timestamp": "2026-05-08T16:02:00Z",
+      "session": "parallel",
+      "event": "fix(phase-9) missing os import follow-up to a49bf1f",
+      "sha": "8843bc0"
+    },
+    {
+      "timestamp": "2026-05-08T16:05:00Z",
+      "session": "parallel",
+      "event": "M2B.1 — --solo CLI flag",
+      "sha": "9b87bc4"
+    },
+    {
+      "timestamp": "2026-05-08T16:18:00Z",
+      "session": "parallel",
+      "event": "M2B.2 — SoloPipeline body (single-voice short-circuit)",
+      "sha": "3e54819"
+    },
+    {
+      "timestamp": "2026-05-08T16:23:00Z",
+      "session": "parallel",
+      "event": "M2B.3 — integration tests (8 tests, all green)",
+      "sha": "0aa9392",
+      "loc_added_tests": 283
+    },
+    {
+      "timestamp": "2026-05-08T16:26:00Z",
+      "session": "parallel",
+      "event": "M2B.4 — README execution-modes section",
+      "sha": "e0cc24a"
     }
   ],
   "locked_files": {
@@ -63,24 +103,30 @@
       "src/polybuild/scoring/*",
       "src/polybuild/phases/phase_3_score.py",
       "tests/integration/test_m2_*.py",
-      "docs/adr/ADR-XYZ-m2-devcode-integration.md"
+      "docs/adr/ADR-XYZ-m2-devcode-integration.md",
+      "src/polybuild/phases/phase_8_prod_smoke.py (uv cache clean defensive fix)"
     ]
   },
   "killing_criteria_status": {
     "K1_devcode_modified": "ok",
-    "K2_test_suite_2x_slower": "not_measured",
-    "K3_solo_overhead_120s": "not_measured",
-    "K4_audit_p2_50pct": "not_measured",
-    "K5_devcode_vote_2s": "not_measured",
-    "K6_solo_failure_20pct": "not_measured",
-    "K7_loc_800": 394,
+    "K2_test_suite_2x_slower": "ok_baseline_unchanged",
+    "K3_solo_overhead_120s": "not_yet_measured_real_run",
+    "K4_audit_p2_50pct": "not_applicable_M2C",
+    "K5_devcode_vote_2s": "not_applicable_M2A",
+    "K6_solo_failure_20pct": "not_yet_measured_real_run",
+    "K7_loc_800": 561,
     "K8_devcode_files_modified": 0,
-    "K9_hook_blocks": "ok"
+    "K9_hook_blocks": "not_applicable_M2C"
   },
   "loc_breakdown": {
     "pipeline_strategy.py": 125,
     "consensus_pipeline.py": 202,
-    "solo_pipeline.py": 67,
-    "comment": "Total 394 LOC added (under K7=800 budget). __init__.py net delta is -10 LOC (Phase 1-5 block extracted, replaced by 65-line strategy call, plus re-exports)."
-  }
+    "solo_pipeline.py": 234,
+    "cli.py_diff": 22,
+    "phase_8_prod_smoke.py_diff": 22,
+    "tests/integration/test_m2_solo_mode.py": 283,
+    "README.md_diff": 48,
+    "comment": "Total src LOC for K7 = 561/800 (70% of budget). Tests + docs not counted (per plan §K7). M2B fully delivered; M2A and M2C still need to fit in the remaining 239 LOC."
+  },
+  "next_step": "M2A.0 — define ScorerProtocol formal contract (typing.Protocol + ScoredResult Pydantic unifying VoiceScore[] and DEVCODE Decision)"
 }
