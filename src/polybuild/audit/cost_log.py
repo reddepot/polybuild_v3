@@ -18,9 +18,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+import structlog
 from pydantic import BaseModel, ConfigDict
 
 from polybuild.audit.queue import QueueLock, audit_dir, lock_path
+
+logger = structlog.get_logger()
 
 # OpenRouter prices in USD per 1M tokens, as of 2026-05-08. Approximate
 # — providers update them; we recompute on every call so updating this
@@ -139,7 +142,15 @@ def read_cost_log(
     since: datetime | None = None,
     cost_dir: Path | None = None,
 ) -> list[VoiceCostEntry]:
-    """Return cost entries newer than ``since`` (newest first)."""
+    """Return cost entries newer than ``since`` (newest first).
+
+    POLYLENS run #2 P2 (Kimi finding #8): unparseable lines are no
+    longer skipped silently — a warning surfaces the first 80 chars of
+    the bad line and the parse error so a future schema-version drift
+    is visible to the operator instead of degrading dashboards
+    silently. The line is still skipped (forward-compatibility), but
+    the operator gets a signal.
+    """
     cpath = cost_log_path(cost_dir)
     if not cpath.exists():
         return []
@@ -150,7 +161,12 @@ def read_cost_log(
                 continue
             try:
                 entry = VoiceCostEntry.model_validate_json(line)
-            except ValueError:
+            except ValueError as e:
+                logger.warning(
+                    "cost_log_unparseable_line",
+                    line_first_80=line[:80],
+                    error=str(e)[:200],
+                )
                 continue
             if since is not None and entry.timestamp < since:
                 continue
