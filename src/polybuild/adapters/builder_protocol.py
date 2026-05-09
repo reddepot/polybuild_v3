@@ -39,7 +39,7 @@ class BuilderProtocol(ABC):
         - KimiCLIAdapter (CLI)
         - OpenRouterAdapter (HTTP)
         - MistralEUAdapter (HTTP, api.mistral.ai direct)
-        - OllamaLocalAdapter (HTTP local NAS)
+        - OllamaLocalAdapter (HTTP local)
     """
 
     name: str  # ex: "claude_code_opus", "openrouter_deepseek_v4_pro"

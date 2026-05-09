@@ -1,13 +1,14 @@
-"""Ollama local NAS adapter.
+"""Ollama local adapter.
 
-Calls Ollama running on the Synology DS224+ NAS via HTTP.
-Used EXCLUSIVELY for medical paranoia HIGH profile (no external calls).
+Calls a local Ollama HTTP endpoint. Used EXCLUSIVELY for medical
+paranoia HIGH profile (no external calls).
 
 Models:
-    - qwen2.5-coder:14b-int4 (~9 GB, 2-4 tok/s on Celeron J4125)
-    - qwen2.5-coder:7b-int4  (~5 GB, 6-10 tok/s)
+    - qwen2.5-coder:14b-int4 (~9 GB)
+    - qwen2.5-coder:7b-int4  (~5 GB)
 
-NOTE: DeepSeek V3.2 INT4 (685B → ~340 GB) excluded — physically impossible on 18 GB NAS.
+NOTE: DeepSeek V3.2 INT4 (685B → ~340 GB) excluded — physically
+impossible on a low-RAM box.
 """
 
 from __future__ import annotations
@@ -27,11 +28,11 @@ logger = structlog.get_logger()
 
 
 class OllamaLocalAdapter(BuilderProtocol):
-    """Adapter for Ollama running locally on the NAS.
+    """Adapter for Ollama running locally.
 
     Args:
         slug: Ollama model tag (e.g. "qwen2.5-coder:14b-int4")
-        endpoint: HTTP endpoint (default from env or http://nas.local:11434)
+        endpoint: HTTP endpoint (default from ``OLLAMA_ENDPOINT`` env var)
     """
 
     family = "alibaba"  # Qwen models = Alibaba

@@ -116,7 +116,7 @@ _DEFAULT_LIMITS: dict[str, int] = {
     "kimi": 1,        # Grok=3, Qwen=2, Kimi=2, Gemini=1, ChatGPT=1, DeepSeek=5 → median=1.5 → 1 conservative
     "openrouter": 3,  # ChatGPT=3, DeepSeek=irrelevant, default=3
     "mistral": 2,     # EU direct API, generous
-    "ollama": 1,      # Local NAS, single-threaded inference
+    "ollama": 1,      # Local Ollama, single-threaded inference
 }
 
 

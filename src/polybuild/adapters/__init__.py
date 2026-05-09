@@ -95,7 +95,7 @@ def get_builder(voice_id: str) -> BuilderProtocol:
     if voice_id.startswith("xiaomi/"):  # MiMo (Xiaomi/小米)
         return OpenRouterAdapter(slug=voice_id, family="xiaomi")
 
-    # ── Ollama local (Qwen on NAS) ──
+    # ── Ollama local ──
     if voice_id.startswith("qwen") and ":" in voice_id:
         return OllamaLocalAdapter(slug=voice_id)
 

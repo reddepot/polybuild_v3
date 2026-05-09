@@ -371,7 +371,7 @@ polybuild audit enqueue --sha <SHA> --repo .  # manual enqueue (used by hook)
 | Gemini CLI | Pro | Gemini 3.1 Pro, Flash |
 | Kimi CLI | Allegro | K2.6 |
 
-OpenRouter complémentaire : **DeepSeek V4-Pro, Grok 4.20, Qwen** (irreplaçables, ~15-20€/mois). API Mistral EU directe pour profils `medical_high`. Ollama NAS (Qwen 2.5 Coder 14B INT4) pour `medical_high` paranoïa.
+OpenRouter complémentaire : **DeepSeek V4-Pro, Grok 4.20, Qwen** (irreplaçables, ~15-20€/mois). API Mistral EU directe pour profils `medical_high`. Ollama local (Qwen 2.5 Coder 14B INT4) pour `medical_high` paranoïa, si configuré sur la machine.
 
 **Claude Opus jamais via API payante** : déjà l'orchestrateur via Claude Max.
 

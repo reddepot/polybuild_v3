@@ -76,7 +76,7 @@ def is_us_or_cn_model(voice_id: str) -> bool:
         US: anthropic, openai, google, xai
         CN: moonshot, deepseek, alibaba (qwen/), zhipu (z-ai/),
             xiaomi (xiaomi/), minimax (minimax/)
-        Local (excluded): ollama, qwen-on-NAS (matches "qwen<X>:Y"),
+        Local (excluded): ollama, local Ollama Qwen (matches "qwen<X>:Y"),
                           mistral_eu (EU-based)
 
     Round 10.8 prod-launch fix [Codex POLYLENS A_security-02]: the new
@@ -85,7 +85,7 @@ def is_us_or_cn_model(voice_id: str) -> bool:
     detection. As a result a medical-high profile with
     ``excludes_us_cn_models=True`` was silently leaking data to those
     Chinese providers. Local Ollama Qwen is identified by the ``:`` in
-    ``qwen2.5-coder:14b-int4`` (NAS tag), distinct from the OR
+    ``qwen2.5-coder:14b-int4`` (local Ollama tag), distinct from the OR
     ``qwen/`` namespace.
     """
     # CLI-routed US providers
@@ -107,7 +107,7 @@ def is_us_or_cn_model(voice_id: str) -> bool:
     # OR-routed US providers
     if voice_id.startswith(("x-ai/", "openai/", "anthropic/", "google/", "meta-llama/")):
         return True
-    # Local Ollama Qwen (NAS tag with ':')
+    # Local Ollama Qwen (local tag with ':')
     if voice_id.startswith("qwen") and ":" in voice_id:
         return False
     return False
@@ -155,7 +155,7 @@ def filter_candidates(
         # matched OpenRouter Chinese models (``qwen/qwen3.6-max-preview``,
         # ``qwen/qwen3.6-coder``), silently letting Alibaba data flow
         # through despite ``excludes_us_cn_models=True``. Tighten the
-        # whitelist : keep ``qwen<X>:Y`` (NAS Ollama tag), reject
+        # whitelist : keep ``qwen<X>:Y`` (local Ollama tag), reject
         # ``qwen/<anything>`` (OpenRouter remote).
         filtered = [
             v for v in filtered
