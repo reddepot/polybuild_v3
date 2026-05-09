@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import re
 import shutil
@@ -74,6 +75,18 @@ _COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 # the voice to echo this string verbatim; a missing or altered echo is a
 # strong signal the diff successfully prompt-injected the voice.
 _AUDIT_CANARY = "POLYLENS_CANARY_DO_NOT_OBEY_DIFF_INSTRUCTIONS"
+
+# POLYLENS run #2 P1 (Kimi finding #11): per-commit cost analysis was
+# impossible because ``_log_cost`` recorded ``commit_sha=None``. We
+# thread the active commit through an ``asyncio``-safe context
+# variable: ``audit_commit`` sets it before fanning out to the voices,
+# resets it on exit. ``contextvars.ContextVar`` is the standard
+# async-aware way to propagate per-task state without polluting every
+# function signature.
+_CURRENT_COMMIT_SHA: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "polybuild_audit_current_commit_sha",
+    default=None,
+)
 
 # Best-effort secret redaction (POLYLENS-FIX-1 P0). NOT a security boundary
 # by itself — must be combined with an explicit user opt-in for remote
@@ -314,15 +327,38 @@ async def _call_openrouter(voice_id: str, prompt: str) -> str:
         tokens_completion: int | None = None,
         success: bool = False,
     ) -> None:
-        with contextlib.suppress(OSError, ValueError):
+        # POLYLENS run #2 P1 (Kimi finding #3): the previous version
+        # used ``contextlib.suppress(OSError, ValueError)`` which
+        # silently swallowed ``pydantic.ValidationError`` (a ValueError
+        # subclass). A malformed OpenRouter usage object dropped the
+        # whole cost entry, leaving monthly spend reports incomplete
+        # without any signal in the logs. Now both error classes
+        # surface as warnings — dashboards still keep working but the
+        # operator can see when a voice misbehaves.
+        try:
             log_voice_call(
                 voice_id,
                 pool="chinese",
-                commit_sha=None,  # not threaded through here yet
+                commit_sha=_CURRENT_COMMIT_SHA.get(),
                 tokens_prompt=tokens_prompt,
                 tokens_completion=tokens_completion,
                 latency_s=time.monotonic() - t0,
                 success=success,
+            )
+        except OSError as e:
+            logger.warning(
+                "cost_log_io_failed",
+                voice_id=voice_id,
+                error=str(e)[:300],
+            )
+        except ValueError as e:
+            # Includes ``pydantic.ValidationError``. Log explicitly so
+            # the malformed entry is visible to the operator instead of
+            # being silently dropped.
+            logger.warning(
+                "cost_log_validation_failed",
+                voice_id=voice_id,
+                error=str(e)[:300],
             )
 
     if not _is_remote_audit_allowed():
@@ -708,11 +744,22 @@ async def audit_commit(
     # Run both voices in parallel — anti-pattern #18 (bash orchestrator
     # fragile): asyncio.gather with return_exceptions so one failure
     # never poisons the other.
-    western_task = caller(pair.western, prompt)
-    chinese_task = caller(pair.chinese, prompt)
-    raw_western, raw_chinese = await asyncio.gather(
-        western_task, chinese_task, return_exceptions=True,
-    )
+    #
+    # POLYLENS run #2 P1 (Kimi finding #11): set the active commit_sha
+    # in a context variable so ``_log_cost`` (deep inside the dispatch
+    # helpers) can record per-commit cost data. ``ContextVar`` is
+    # async-aware: each gather child task inherits the parent context
+    # and the ``reset`` in the ``finally`` clause restores the prior
+    # value (useful for nested test fixtures and recursive calls).
+    token = _CURRENT_COMMIT_SHA.set(entry.commit_sha)
+    try:
+        western_task = caller(pair.western, prompt)
+        chinese_task = caller(pair.chinese, prompt)
+        raw_western, raw_chinese = await asyncio.gather(
+            western_task, chinese_task, return_exceptions=True,
+        )
+    finally:
+        _CURRENT_COMMIT_SHA.reset(token)
 
     findings: list[BacklogFinding] = []
     if isinstance(raw_western, str):
