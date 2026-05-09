@@ -149,11 +149,13 @@ class ShadowScorer:
         # filter ends up picking. We approximate that by taking the
         # top-score not-disqualified entry, mirroring the pipeline.
         naive_winner_voice_id = self._derive_naive_winner(naive)
-        diverged = bool(
-            devcode.winner_voice_id is not None
-            and naive_winner_voice_id is not None
-            and devcode.winner_voice_id != naive_winner_voice_id
-        )
+        # POLYLENS run #2 P2 (gemini): require both winners non-None
+        # missed the abstain-vs-pick divergence (e.g. DEVCODE abstains
+        # because it lost confidence while the naive pipeline still
+        # picks something). Direct inequality covers all four cases:
+        # both pick same → False, both pick different → True, exactly
+        # one abstains → True, both abstain → False.
+        diverged = devcode.winner_voice_id != naive_winner_voice_id
 
         record = ShadowDivergence(
             run_id=spec.run_id,
