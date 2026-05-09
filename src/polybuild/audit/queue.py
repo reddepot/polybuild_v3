@@ -36,6 +36,8 @@ from typing import IO, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from polybuild.audit._atomic_io import atomic_write_text
+
 # Default base directory ─ user-overridable via env for tests / multi-user
 # machines. ``~/.polybuild/audit/`` keeps the audit artefacts isolated
 # from runtime checkpoints which live under ``<project>/.polybuild/``.
@@ -274,10 +276,13 @@ def mark_entry_processed(
                 continue
             survivors.append(line)
 
-        if survivors:
-            qpath.write_text("\n".join(survivors) + "\n", encoding="utf-8")
-        else:
-            qpath.write_text("", encoding="utf-8")
+        # POLYLENS run #2 P0: rewrite the queue atomically. The
+        # previous in-place ``write_text`` truncated the file before
+        # writing the survivors; a crash in between lost every entry
+        # we had just decided to keep — the same regression
+        # POLYLENS-FIX-3 was meant to prevent.
+        payload = "\n".join(survivors) + "\n" if survivors else ""
+        atomic_write_text(qpath, payload)
 
     return removed
 

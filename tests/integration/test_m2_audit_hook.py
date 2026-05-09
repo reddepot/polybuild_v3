@@ -105,6 +105,41 @@ class TestQueue:
         survivors = read_queue(queue_dir=tmp_path)
         assert {e.commit_sha for e in survivors} == {"bbbbbbb", "ccccccc"}
 
+    def test_mark_entry_processed_atomic(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # POLYLENS run #2 P0 regression: a crash mid-rewrite must NOT
+        # lose any unprocessed entries from the queue. We simulate the
+        # crash by forcing the atomic helper to raise after we've
+        # decided what to keep but before the rename lands.
+        from polybuild.audit import _atomic_io, mark_entry_processed
+
+        e1 = AuditQueueEntry(commit_sha="aaaaaaa", repo_path=tmp_path)
+        e2 = AuditQueueEntry(commit_sha="bbbbbbb", repo_path=tmp_path)
+        for e in (e1, e2):
+            append_queue_entry(e, queue_dir=tmp_path)
+
+        def boom(*_a: object, **_kw: object) -> None:
+            raise OSError("simulated crash")
+
+        monkeypatch.setattr(_atomic_io, "atomic_write_text", boom)
+        # mark_entry_processed imports the helper at module scope, so
+        # patch the binding it actually uses too.
+        from polybuild.audit import queue as queue_mod
+
+        monkeypatch.setattr(queue_mod, "atomic_write_text", boom)
+
+        with pytest.raises(OSError, match="simulated crash"):
+            mark_entry_processed(e1, queue_dir=tmp_path)
+
+        # Both entries still in the queue (not lost).
+        assert {x.commit_sha for x in read_queue(queue_dir=tmp_path)} == {
+            "aaaaaaa",
+            "bbbbbbb",
+        }
+
     def test_malformed_lines_skipped(self, tmp_path: Path) -> None:
         # Manually inject a bad line alongside a valid one.
         entry = AuditQueueEntry(commit_sha="ddddddd", repo_path=tmp_path)

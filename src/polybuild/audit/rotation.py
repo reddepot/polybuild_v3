@@ -24,10 +24,7 @@ desync.
 
 from __future__ import annotations
 
-import contextlib
 import json
-import os
-import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,6 +32,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from polybuild.audit._atomic_io import atomic_write_text
 from polybuild.audit.queue import QueueLock, audit_dir, lock_path
 
 # ────────────────────────────────────────────────────────────────
@@ -132,39 +130,8 @@ def _load_state(path: Path) -> RotationState:
 
 
 def _save_state(path: Path, state: RotationState) -> None:
-    """Atomic write via tmp + ``Path.replace`` (rename is atomic on POSIX)."""
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    payload = state.model_dump_json(indent=2)
-
-    # NamedTemporaryFile in the same directory so rename is on the
-    # same filesystem (no EXDEV concerns). ``delete=False`` because we
-    # promote the file via rename — the with-block must NOT delete it.
-    fd, tmp_name = tempfile.mkstemp(
-        dir=path.parent,
-        prefix=path.name + ".",
-        suffix=".tmp",
-    )
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(payload)
-            fh.flush()
-            os.fsync(fh.fileno())
-        tmp_path.replace(path)
-    except Exception:
-        with contextlib.suppress(OSError):
-            tmp_path.unlink(missing_ok=True)
-        raise
-
-    # Best-effort fsync of the directory to push the rename through to
-    # disk; failure here is silent (no-op on filesystems that don't
-    # support fsync on directories).
-    with contextlib.suppress(OSError):
-        dir_fd = os.open(str(path.parent), os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+    """Atomic write via the shared :mod:`polybuild.audit._atomic_io` helper."""
+    atomic_write_text(path, state.model_dump_json(indent=2))
 
 
 def pick_voice_pair(state_dir: Path | None = None) -> VoicePair:
