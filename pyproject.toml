@@ -1,6 +1,6 @@
 [project]
 name = "polybuild-core"
-version = "3.2.5"
+version = "3.2.6"
 description = "Multi-LLM orchestrated code generation pipeline for solo Python dev"
 authors = [{name = "reddie", email = "redtech@protonmail.com"}]
 readme = "README.md"
@@ -14,7 +14,9 @@ dependencies = [
     "rich>=13.0",
     "httpx>=0.25",
     "structlog>=23.0",
-    "tomli>=2.0; python_version<'3.11'",
+    # POLYLENS run #5 P2 (Kimi): ``tomli>=2.0; python_version<'3.11'``
+    # was dead — ``requires-python = ">=3.11"`` makes the conditional
+    # always false. The codebase uses ``tomllib`` (stdlib 3.11+).
     # Round 10.7 fix [Codex validation PB-R107-P3B-PACKAGING-UNDECLARED P1]:
     # phase_3b_grounding now uses packaging.requirements.Requirement for
     # PEP 508 parsing — must be a declared runtime dependency.

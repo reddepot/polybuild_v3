@@ -38,7 +38,7 @@ from typing import Any
 
 import structlog
 
-from polybuild.audit.queue import audit_dir
+from polybuild.audit.queue import QueueLock, audit_dir, lock_path
 
 logger = structlog.get_logger()
 
@@ -60,7 +60,7 @@ def cache_db_path(override: Path | None = None) -> Path:
 # would need a connection pool. Documented and serialised.
 #
 # RLock (reentrant) is required because ``cache_get`` / ``cache_put`` /
-# ``cache_get_with_metadata`` already hold the lock when they call
+# ``_cache_get_with_metadata`` already hold the lock when they call
 # ``_get_conn`` on a cold cache (first call after import) — that nested
 # call would deadlock a plain ``threading.Lock``.
 _CONN_LOCK = threading.RLock()
@@ -108,6 +108,17 @@ def _get_conn(db_path: Path) -> sqlite3.Connection:
         db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with contextlib.suppress(OSError):
             db_path.parent.chmod(0o700)
+        # POLYLENS run #5 P1 (Gemini + Kimi convergent): SQLite creates
+        # the .db / .db-wal / .db-shm files lazily during ``connect``
+        # and the first WAL transaction. Any chmod we do AFTER those
+        # exist leaves a TOCTOU window where another local user can
+        # ``open(..., O_RDONLY)`` the file at umask perms. Pre-create
+        # the main .db file at 0o600 BEFORE sqlite3 opens it so the
+        # sqlite C library inherits the right mode rather than
+        # creating it world-readable.
+        if not db_path.exists():
+            with contextlib.suppress(OSError):
+                db_path.touch(mode=0o600)
         conn = sqlite3.connect(
             str(db_path),
             check_same_thread=False,
@@ -275,8 +286,15 @@ def cache_put(
     if not cache_enabled():
         return
     db = cache_db_path(cache_dir)
+    # POLYLENS run #5 P1 (Gemini): ``threading.RLock`` is process-local.
+    # A CLI ``polybuild audit cache clear`` running in parallel with a
+    # daemon ``polybuild audit drain`` would race the same SQLite file
+    # and produce ``database is locked`` errors. Wrap writes in the
+    # cross-process ``QueueLock`` (fcntl.flock) so concurrent processes
+    # serialise on the same file lock as the audit queue. The intra-
+    # process ``_CONN_LOCK`` still protects the connection cursor.
     try:
-        with _CONN_LOCK:
+        with QueueLock(lock_path(cache_dir), timeout_s=10.0), _CONN_LOCK:
             conn = _CONN_CACHE.get(db) or _get_conn(db)
             conn.execute(
                 """
@@ -293,6 +311,11 @@ def cache_put(
                     latency_s,
                 ),
             )
+            # POLYLENS run #5 P2 (Kimi): chmod inside the lock so a
+            # parallel ``cache_get`` cannot read the freshly-created
+            # WAL/SHM sidecars at umask perms during the few μs we
+            # were waiting outside the lock to chmod them.
+            _chmod_sqlite_files(db)
     except sqlite3.Error as e:
         logger.warning(
             "llm_cache_put_failed",
@@ -300,9 +323,6 @@ def cache_put(
             voice_id=voice_id,
             key_first_8=key[:8],
         )
-        return
-    # Sidecars may have been created on this write — re-tighten perms.
-    _chmod_sqlite_files(db)
 
 
 def cache_stats(cache_dir: Path | None = None) -> dict[str, Any]:
@@ -313,7 +333,7 @@ def cache_stats(cache_dir: Path | None = None) -> dict[str, Any]:
     ``_CONN_LOCK`` — a concurrent ``cache_put`` from another thread (or
     a parallel ``cache_clear`` from the CLI) could race the cursor and
     produce a ``sqlite3.ProgrammingError``. Now serialised, mirroring
-    ``cache_get_with_metadata`` and ``cache_put``.
+    ``_cache_get_with_metadata`` and ``cache_put``.
     """
     db = cache_db_path(cache_dir)
     if not db.exists():
@@ -327,33 +347,66 @@ def cache_stats(cache_dir: Path | None = None) -> dict[str, Any]:
             ).fetchone()[0]
     except sqlite3.Error as e:
         return {"error": str(e), "rows": 0, "voices": 0, "size_bytes": 0}
+    # POLYLENS run #5 P2 (Kimi): WAL mode means recent transactions live
+    # in ``.db-wal`` (and ``.db-shm`` is bookkeeping). Reporting only the
+    # main file's size under-counts disk usage by 30-40% on an active
+    # cache. Sum the triplet so the operator sees the real footprint.
     size = 0
-    with contextlib.suppress(OSError):
-        size = db.stat().st_size
+    for suffix in ("", "-wal", "-shm"):
+        sidecar = db.with_name(db.name + suffix)
+        with contextlib.suppress(OSError):
+            if sidecar.exists():
+                size += sidecar.stat().st_size
     return {"rows": int(row_count), "voices": int(voice_count), "size_bytes": int(size)}
 
 
 def cache_clear(cache_dir: Path | None = None) -> int:
     """Delete every entry. Returns the number of rows removed.
 
-    POLYLENS run #4 P1 (Perplexity + DeepSeek convergent): now holds
+    POLYLENS run #4 P1 (Perplexity + DeepSeek convergent): holds
     ``_CONN_LOCK`` for the whole COUNT + DELETE + VACUUM sequence so a
-    concurrent ``cache_get`` cannot race on the same connection and
-    so ``VACUUM`` doesn't run while another thread is mid-transaction.
+    concurrent ``cache_get`` cannot race on the same connection.
+
+    POLYLENS run #5 P1 (Kimi): the previous version returned ``0`` on
+    any sqlite error, **including** a VACUUM failure that came after
+    DELETE had already been committed (the connection is in
+    autocommit mode). The caller therefore got the wrong row count
+    while the data was actually wiped. We now track ``before`` and
+    ``deleted`` separately: ``before`` is captured immediately after
+    DELETE so a downstream VACUUM failure still returns the honest
+    deleted-count rather than a misleading 0.
     """
     db = cache_db_path(cache_dir)
     if not db.exists():
         return 0
+    deleted = 0
     try:
-        with _CONN_LOCK:
+        # POLYLENS run #5 P1 (Gemini): cross-process lock so a parallel
+        # daemon doesn't observe a half-cleared cache and so the daemon's
+        # ``cache_get`` doesn't trip over our DELETE+VACUUM.
+        with QueueLock(lock_path(cache_dir), timeout_s=10.0), _CONN_LOCK:
             conn = _CONN_CACHE.get(db) or _get_conn(db)
             before = conn.execute("SELECT COUNT(*) FROM llm_cache").fetchone()[0]
             conn.execute("DELETE FROM llm_cache")
-            conn.execute("VACUUM")
+            # DELETE has been committed (autocommit). Capture the count
+            # before VACUUM so a VACUUM failure doesn't make us lie.
+            deleted = int(before)
+            try:
+                conn.execute("VACUUM")
+            except sqlite3.Error as e:
+                logger.warning(
+                    "llm_cache_vacuum_failed",
+                    error=str(e),
+                    rows_deleted=deleted,
+                    hint=(
+                        "DELETE was committed — the cache IS empty even "
+                        "though VACUUM did not reclaim disk space."
+                    ),
+                )
     except sqlite3.Error as e:
-        logger.warning("llm_cache_clear_failed", error=str(e))
-        return 0
-    return int(before)
+        logger.warning("llm_cache_clear_failed", error=str(e), rows_deleted=deleted)
+        return deleted
+    return deleted
 
 
 __all__ = [

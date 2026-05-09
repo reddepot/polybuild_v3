@@ -47,9 +47,16 @@ def atomic_write_text(
             POLYLENS run #4 P3 (Perplexity): callers writing to a
             shared worktree (eg. ``polybuild.security.safe_write``)
             override to ``0o755`` so CI runners and reviewers can
-            still read the generated source. The flag preserves the
-            audit-state default while letting non-audit callers opt
-            into a normal directory mode.
+            still read the generated directory.
+
+    POLYLENS run #5 P2 (Gemini): ``tempfile.mkstemp`` always creates
+    the temp file at hard-coded ``0o600`` regardless of the parent
+    mode, so the ``parent_mode=0o755`` worktree fix only opened the
+    directory but left every emitted file unreadable to the user's
+    CI / reviewer accounts. We now derive the **file** mode from the
+    parent: 0o755 dir → 0o644 file, 0o700 dir → 0o600 file. Applied
+    after ``Path.replace`` so the final destination has the right
+    mode (the mid-flight tmp file remains 0o600 — no leak window).
     """
     path.parent.mkdir(parents=True, exist_ok=True, mode=parent_mode)
 
@@ -69,6 +76,13 @@ def atomic_write_text(
         with contextlib.suppress(OSError):
             tmp_path.unlink(missing_ok=True)
         raise
+
+    # POLYLENS run #5 P2: mkstemp's 0o600 default is right for audit
+    # state but wrong for shared worktrees. Mirror the parent's
+    # readable bits so a 0o755 directory yields a 0o644 file.
+    file_mode = 0o644 if parent_mode == 0o755 else 0o600
+    with contextlib.suppress(OSError):
+        path.chmod(file_mode)
 
     with contextlib.suppress(OSError):
         dir_fd = os.open(str(path.parent), os.O_RDONLY)

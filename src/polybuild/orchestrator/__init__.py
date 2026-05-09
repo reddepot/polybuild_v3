@@ -926,3 +926,34 @@ def _build_aborted_run(
         started_at=started_at,
         completed_at=datetime.now(UTC),
     )
+
+
+# POLYLENS run #5 P3 (Kimi): the previous module shipped without an
+# ``__all__``, so ``from polybuild.orchestrator import *`` exported
+# every transitively-imported symbol (``json``, ``os``, ``Path``,
+# ``Any``, every Pydantic model, every phase). This declaration
+# narrows the wildcard surface to the actually-public API. Tests and
+# call-sites that reach for non-listed symbols via attribute access
+# still work — Python does not enforce ``__all__`` outside ``import *``.
+__all__ = [
+    # Strategy contract + implementations.
+    "CheckpointFn",
+    "ConsensusPipeline",
+    "PipelineStrategy",
+    "SoloPipeline",
+    "StrategyOutcome",
+    # Public orchestration API.
+    "generate_run_id",
+    "run_polybuild",
+    "save_checkpoint",
+    # Phase re-exports the rest of the codebase imports from here
+    # (kept for backward compatibility with existing call-sites).
+    "grounding_disqualifies",
+    "phase_2_generate",
+    "phase_3_score",
+    "phase_3b_grounding",
+    "phase_4_audit",
+    "phase_5_dispatch",
+    "phase_6_validate",
+    "select_voices",
+]

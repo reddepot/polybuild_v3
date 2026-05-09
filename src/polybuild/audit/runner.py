@@ -352,7 +352,10 @@ async def _call_western_cli(
             return "", None, None
         latency_s = time.monotonic() - t0
         return stdout_b.decode("utf-8", errors="replace"), None, latency_s
-    except (OSError, FileNotFoundError):
+    except OSError:
+        # ``FileNotFoundError`` is an OSError subclass — the previous
+        # ``(OSError, FileNotFoundError)`` was redundant (POLYLENS run #5
+        # P2, Kimi).
         return "", None, None
 
 
@@ -491,12 +494,16 @@ async def _call_openrouter(
         tokens_total = usage.get("total_tokens")
         choices = data.get("choices", [])
         if not choices:
+            # POLYLENS run #5 P2 (Kimi): OpenRouter charged us for the
+            # tokens it parsed even though no content was returned.
+            # Surface ``tokens_total`` to the caller so the cost log
+            # and any downstream attribution agree on the spend.
             _log_cost(
                 tokens_prompt=tokens_prompt,
                 tokens_completion=tokens_completion,
                 success=False,
             )
-            return "", None, None
+            return "", tokens_total, None
         text = choices[0].get("message", {}).get("content", "")
         if not isinstance(text, str):
             _log_cost(
@@ -504,7 +511,7 @@ async def _call_openrouter(
                 tokens_completion=tokens_completion,
                 success=False,
             )
-            return "", None, None
+            return "", tokens_total, None
         latency_s = time.monotonic() - t0
         _log_cost(
             tokens_prompt=tokens_prompt,
@@ -512,7 +519,19 @@ async def _call_openrouter(
             success=True,
         )
         return text, tokens_total, latency_s
-    except (httpx.HTTPError, ValueError, KeyError):
+    except (httpx.HTTPError, ValueError, KeyError) as e:
+        # POLYLENS run #5 P2 (Kimi): the previous version logged the
+        # failure to the cost JSONL but didn't emit a ``warning`` on
+        # the runner stream — operators tailing only ``warning+`` saw
+        # a silent void on every OpenRouter timeout. Now we surface
+        # the error type so OpenRouter incidents are visible alongside
+        # the rest of the audit pipeline's signals.
+        logger.warning(
+            "audit_openrouter_error",
+            voice_id=voice_id,
+            error_type=type(e).__name__,
+            error=str(e)[:300],
+        )
         _log_cost(
             tokens_prompt=tokens_prompt,
             tokens_completion=tokens_completion,

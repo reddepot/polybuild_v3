@@ -16,8 +16,9 @@ Activated via ``--scorer=devcode-shadow`` on the CLI.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict
@@ -36,23 +37,52 @@ def shadow_log_path(override: Path | None = None) -> Path:
     return audit_dir(override) / "scorer_shadow.jsonl"
 
 
+class DivergenceState(StrEnum):
+    """Qualitative bucket for a scorer comparison.
+
+    POLYLENS run #5 P3 (Kimi): a plain ``str`` field accepted any value;
+    a typo in ``_classify_divergence`` would have been silently
+    persisted. ``StrEnum`` gives Pydantic a closed value set so the
+    bucket stays consistent over time.
+
+    States:
+      * ``ALIGNED`` — both scorers picked the same winner.
+      * ``PICKED_DIFFERENT`` — real divergence (different winners).
+      * ``DEVCODE_ABSTAINED`` — DEVCODE returned None (no quorum /
+        low confidence). Naïve still has a winner via eligibility.
+      * ``NAIVE_ABSTAINED`` — rare — naïve had nothing eligible while
+        DEVCODE found a winner.
+      * ``BOTH_ABSTAINED`` — nobody picked. Not a divergence.
+    """
+
+    ALIGNED = "aligned"
+    PICKED_DIFFERENT = "picked_different"
+    DEVCODE_ABSTAINED = "devcode_abstained"
+    NAIVE_ABSTAINED = "naive_abstained"
+    BOTH_ABSTAINED = "both_abstained"
+
+
 class ShadowDivergence(BaseModel):
     """One scorer comparison record (closed schema).
 
     POLYLENS run #3 P2 (Gemini + Qwen convergent): the previous
-    ``diverged: bool`` field conflated three distinct states: (a)
-    DEVCODE picked a different winner than naïve (real divergence),
-    (b) DEVCODE abstained because it had no quorum (<2 OK voices) or
-    grounding disqualified its first pick — this is *not* a real
-    divergence, it's the scorer correctly declining to choose. Booking
-    every abstain as ``diverged=True`` polluted the calibration
-    dataset. The new ``divergence_state`` enum separates them so the
+    ``diverged: bool`` field conflated three distinct states. The
+    ``divergence_state`` enum was introduced to separate them so the
     operator can filter abstain-noise out of weekly reports.
+
+    POLYLENS run #5 P2/P3 (Gemini + Grok + Kimi convergent): the run
+    #4 ``diverged`` semantic flip (strict ``picked_different`` only)
+    silently broke historic dashboards that aggregated ``diverged=True``
+    on the older permissive contract. ``schema_version`` now bumps to
+    ``2`` with a strict ``Literal[2]`` type so any consumer can detect
+    the boundary and migrate. Records persisted by v3.2.4 (or earlier)
+    have ``schema_version=1`` — readers MUST treat the two cohorts as
+    incompatible until backfilled.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: int = 1
+    schema_version: Literal[2] = 2
     run_id: str
     profile_id: str
     naive_winner: str | None
@@ -61,16 +91,7 @@ class ShadowDivergence(BaseModel):
     devcode_confidence: float
     devcode_requires_polylens_review: bool
     diverged: bool
-    # POLYLENS run #3 P2: ``divergence_state`` adds the qualitative
-    # bucket while keeping ``diverged`` for backward-compat dashboards.
-    #   - ``aligned``: both scorers picked the same winner.
-    #   - ``picked_different``: real divergence — different winners.
-    #   - ``devcode_abstained``: DEVCODE returned None (no quorum / low
-    #     confidence). Naïve still has a winner via eligibility filter.
-    #   - ``naive_abstained``: extremely rare — naïve had nothing
-    #     eligible while DEVCODE found a winner.
-    #   - ``both_abstained``: nobody picked. Not a divergence.
-    divergence_state: str = "aligned"
+    divergence_state: DivergenceState = DivergenceState.ALIGNED
     voices_in_panel: list[str]
     timestamp: datetime
 
@@ -201,7 +222,7 @@ class ShadowScorer:
             devcode_winner=devcode.winner_voice_id,
             naive_winner=naive_winner_voice_id,
         )
-        diverged = divergence_state == "picked_different"
+        diverged = divergence_state == DivergenceState.PICKED_DIFFERENT
 
         record = ShadowDivergence(
             run_id=spec.run_id,
@@ -246,24 +267,24 @@ class ShadowScorer:
         *,
         devcode_winner: str | None,
         naive_winner: str | None,
-    ) -> str:
+    ) -> DivergenceState:
         """Map the (devcode_winner, naive_winner) tuple to a qualitative bucket.
 
-        See :class:`ShadowDivergence.divergence_state` for the bucket
-        semantics. Used by ``_log_divergence`` to record richer than a
-        plain bool — abstain-noise is the dominant contributor to
-        ``diverged=True`` and operators want to filter it out of weekly
-        calibration reports.
+        See :class:`DivergenceState` for the bucket semantics. Used by
+        ``_log_divergence`` to record richer than a plain bool —
+        abstain-noise is the dominant contributor to ``diverged=True``
+        and operators want to filter it out of weekly calibration
+        reports.
         """
         if devcode_winner is None and naive_winner is None:
-            return "both_abstained"
+            return DivergenceState.BOTH_ABSTAINED
         if devcode_winner is None:
-            return "devcode_abstained"
+            return DivergenceState.DEVCODE_ABSTAINED
         if naive_winner is None:
-            return "naive_abstained"
+            return DivergenceState.NAIVE_ABSTAINED
         if devcode_winner == naive_winner:
-            return "aligned"
-        return "picked_different"
+            return DivergenceState.ALIGNED
+        return DivergenceState.PICKED_DIFFERENT
 
     @staticmethod
     def _derive_naive_winner(naive: ScoredResult) -> str | None:
@@ -282,4 +303,9 @@ class ShadowScorer:
         return winner.voice_id
 
 
-__all__ = ["ShadowDivergence", "ShadowScorer", "shadow_log_path"]
+__all__ = [
+    "DivergenceState",
+    "ShadowDivergence",
+    "ShadowScorer",
+    "shadow_log_path",
+]

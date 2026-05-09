@@ -121,9 +121,18 @@ class DevcodeScorer:
             votes, ctx = builder_results_to_devcode_votes(
                 results, naive_result.voice_scores, spec
             )
-            # devcode_vote_v1 is CPU-bound math (no I/O); call it directly
-            # rather than dispatching to a thread.
-            decision = devcode_vote_v1(votes, ctx, self.store)
+            # POLYLENS run #5 P2 (Gemini): the Schulze + Glicko + cosine
+            # collusion math is CPU-bound and on a panel of ≥4 voices
+            # can run for tens of milliseconds. The previous synchronous
+            # call blocked the asyncio event loop for that whole window,
+            # starving every other coroutine (logging flushes, network
+            # IO, signal handlers). Dispatch via ``asyncio.to_thread``
+            # so the event loop keeps spinning while the math runs.
+            import asyncio
+
+            decision = await asyncio.to_thread(
+                devcode_vote_v1, votes, ctx, self.store
+            )
         except ValueError as e:
             logger.warning(
                 "devcode_scorer_unmapped_family_or_invalid_input",
