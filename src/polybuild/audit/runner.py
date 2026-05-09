@@ -243,6 +243,15 @@ def _western_cli_command(voice_id: str) -> list[str] | None:
 async def _call_western_cli(voice_id: str, prompt: str) -> str:
     """Spawn the matching CLI binary, send the prompt as the last argv,
     capture stdout. Silently returns ``""`` on any failure.
+
+    POLYLENS run #2 P1 (Kimi finding #1): a non-zero exit code from the
+    CLI MUST yield ``""``. Returning the stdout of a failed call would
+    pipe a CLI error message (rate-limit JSON, login prompt, etc.) into
+    the JSON-Lines parser, which would either fail the canary check
+    (correct outcome) or — worse — happen to contain text that matches
+    a finding shape and produce false positives. The new explicit
+    ``returncode != 0`` branch makes the silent-failure invariant
+    documented in the docstring an actual code-level guarantee.
     """
     argv = _western_cli_command(voice_id)
     if argv is None:
@@ -256,7 +265,7 @@ async def _call_western_cli(voice_id: str, prompt: str) -> str:
             stdin=asyncio.subprocess.DEVNULL,
         )
         try:
-            stdout_b, _stderr_b = await asyncio.wait_for(
+            stdout_b, stderr_b = await asyncio.wait_for(
                 proc.communicate(),
                 timeout=VOICE_TIMEOUT_S,
             )
@@ -265,6 +274,14 @@ async def _call_western_cli(voice_id: str, prompt: str) -> str:
                 proc.kill()
             await asyncio.sleep(0)  # let kill propagate
             logger.warning("audit_voice_timeout", voice_id=voice_id)
+            return ""
+        if proc.returncode != 0:
+            logger.warning(
+                "audit_voice_nonzero_exit",
+                voice_id=voice_id,
+                returncode=proc.returncode,
+                stderr_first_300=stderr_b.decode("utf-8", errors="replace")[:300],
+            )
             return ""
         return stdout_b.decode("utf-8", errors="replace")
     except (OSError, FileNotFoundError):
