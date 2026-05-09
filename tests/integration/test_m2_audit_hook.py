@@ -381,6 +381,26 @@ class TestRunner:
         )
         assert findings == []
 
+    def test_canary_in_middle_is_rejected(self) -> None:
+        """POLYLENS run #2 P1: a canary anywhere but the last line is
+        treated as evidence of injection. The diff coerced the voice to
+        echo the canary early so the trailing junk could suppress real
+        findings."""
+        from polybuild.audit.runner import _AUDIT_CANARY, _parse_voice_output
+
+        valid = json.dumps(
+            {
+                "axis": "A_security",
+                "severity": "P0",
+                "file": "x.py",
+                "line": 1,
+                "message": "x",
+            }
+        )
+        # Canary in the middle, garbage at the end → rejected.
+        raw = f"{_AUDIT_CANARY}\n{valid}\nfoo bar baz"
+        assert _parse_voice_output(raw, "codex-gpt-5.5", "abc1234") == []
+
     @pytest.mark.asyncio
     async def test_garbage_output_returns_no_findings(
         self,
