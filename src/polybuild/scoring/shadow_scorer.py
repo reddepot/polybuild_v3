@@ -100,11 +100,26 @@ class ShadowScorer:
         # ValueError on family mapping, RuntimeError inside the math
         # kernel) is logged and swallowed: the shadow run must NEVER
         # impact the live pipeline.
+        #
+        # POLYLENS run #2 P2 (Kimi finding #9): the previous catch-all
+        # ``except Exception`` swallowed ``MemoryError`` and
+        # ``RecursionError`` too, masking catastrophic scorer failures
+        # behind a "shadow_devcode_failed" log line. Narrowing to the
+        # known scorer-side exceptions (Import / Value / Runtime /
+        # Attribute / Type / OS) lets system-level errors propagate so
+        # the orchestrator can take appropriate action.
         devcode_result: ScoredResult | None = None
         try:
             devcode_scorer = self._build_devcode()
             devcode_result = await devcode_scorer.score(results, spec)
-        except Exception as e:
+        except (
+            ImportError,
+            ValueError,
+            RuntimeError,
+            AttributeError,
+            TypeError,
+            OSError,
+        ) as e:
             logger.warning(
                 "shadow_devcode_failed",
                 run_id=spec.run_id,
