@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import structlog
+
 from polybuild.models import Status
 from polybuild.scoring.naive_scorer import NaiveScorer
 from polybuild.scoring.protocol import ScoredResult
@@ -33,6 +35,8 @@ if TYPE_CHECKING:
     from devcode.reputation import ReputationStore
 
     from polybuild.models import BuilderResult, Spec
+
+logger = structlog.get_logger()
 
 
 class DevcodeScorer:
@@ -105,13 +109,40 @@ class DevcodeScorer:
             option_to_voice_id,
         )
 
-        votes, ctx = builder_results_to_devcode_votes(
-            results, naive_result.voice_scores, spec
-        )
-
-        # devcode_vote_v1 is CPU-bound math (no I/O); call it directly
-        # rather than dispatching to a thread.
-        decision = devcode_vote_v1(votes, ctx, self.store)
+        # POLYLENS run #3 P1 (qwen3.6-max-preview): an unmapped POLYBUILD
+        # family (e.g. ``"xai"`` if a Grok voice is added to a profile
+        # without first updating ``_FAMILY_MAP``) raised a bare
+        # ``ValueError`` from ``builder_results_to_devcode_votes`` that
+        # bubbled to the orchestrator and aborted the entire run.
+        # Graceful degradation: catch the mapping failure, fall back to
+        # naive abstain (``winner_voice_id=None``) so the consensus
+        # pipeline's eligibility filter still picks a winner.
+        try:
+            votes, ctx = builder_results_to_devcode_votes(
+                results, naive_result.voice_scores, spec
+            )
+            # devcode_vote_v1 is CPU-bound math (no I/O); call it directly
+            # rather than dispatching to a thread.
+            decision = devcode_vote_v1(votes, ctx, self.store)
+        except ValueError as e:
+            logger.warning(
+                "devcode_scorer_unmapped_family_or_invalid_input",
+                run_id=spec.run_id,
+                error=str(e)[:300],
+                hint=(
+                    "Falling back to naive abstain. Add the missing "
+                    "POLYBUILD family to scoring/devcode_adapter._FAMILY_MAP."
+                ),
+            )
+            return ScoredResult(
+                voice_scores=naive_result.voice_scores,
+                winner_voice_id=None,
+                confidence=naive_result.confidence,
+                requires_polylens_review=False,
+                scorer_name="devcode_unmapped_family",
+                debug_data={"reason": "unmapped_family_or_invalid_input",
+                            "error": str(e)[:300]},
+            )
 
         winner_voice_id = option_to_voice_id(decision.winner, ok_results)
 

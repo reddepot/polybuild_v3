@@ -1,6 +1,6 @@
 [project]
 name = "polybuild-core"
-version = "3.2.3"
+version = "3.2.4"
 description = "Multi-LLM orchestrated code generation pipeline for solo Python dev"
 authors = [{name = "reddie", email = "redtech@protonmail.com"}]
 readme = "README.md"
@@ -38,22 +38,23 @@ embeddings = [
     "sentence-transformers>=2.2",
     "sqlite-vec>=0.1",
 ]
-local = [
-    "ollama>=0.1",
-]
-# M2A.3 — DEVCODE-Vote v1 arbitration, opt-in via ``--scorer=devcode``.
-# devcode v1.0 lives at ``~/Developer/projects/devcode`` (sibling
-# project, not yet on PyPI). The ``file://`` URL hard-codes the local
-# path because PEP 508 has no environment-variable expansion; replace
-# with a PyPI version pin (``devcode>=1.0.0``) once published.
-# Install:
-#   pip install -e ".[devcode]"        # auto if the path resolves
-#   # or override the path:
-#   pip install -e ~/path/to/devcode
-#   pip install -e ".[devcode]"
-devcode = [
-    "devcode @ file:///Users/radu/Developer/projects/devcode",
-]
+
+# M2A.3 — DEVCODE-Vote v1 arbitration is opt-in via ``--scorer=devcode``.
+#
+# POLYLENS run #3 P0 (Grok + Gemini + Codex + DeepSeek convergent):
+# the previous ``[devcode]`` extra hard-coded ``file:///Users/radu/...``,
+# which broke ``pip install -e ".[devcode]"`` for every other developer
+# and every CI. The honest layout: declare no extra here, ask the user
+# to install the sibling project separately. The lazy imports inside
+# ``polybuild.scoring.devcode_*`` raise ``ImportError`` with a clear
+# hint when ``--scorer=devcode`` is requested without devcode on
+# ``sys.path``; the CLI wraps that into a ``BadParameter`` so the user
+# sees a usable error.
+#
+# Install steps documented in README.md "Optional DEVCODE arbitration".
+# Once devcode v1.x is published on PyPI we can re-introduce the extra
+# as ``devcode = ["devcode>=1.0"]`` — until then, no shipping path
+# poisons portability.
 
 [project.scripts]
 polybuild = "polybuild.cli:app"
@@ -62,12 +63,10 @@ polybuild = "polybuild.cli:app"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatch.metadata]
-# M2A.3: the optional ``[devcode]`` extra uses a ``file://`` direct URL
-# (see ``[project.optional-dependencies] devcode``) because devcode is
-# not yet on PyPI. Hatchling rejects direct-reference deps unless we
-# opt in here.
-allow-direct-references = true
+# POLYLENS run #3 P0: the ``[tool.hatch.metadata] allow-direct-references = true``
+# opt-in was only required by the now-removed ``devcode @ file://...``
+# extra. Removed alongside the extra — direct references stay
+# disallowed by default, which is the safer hatchling posture.
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/polybuild"]

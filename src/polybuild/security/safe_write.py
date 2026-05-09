@@ -18,6 +18,8 @@ from typing import Any
 
 import structlog
 
+from polybuild.audit._atomic_io import atomic_write_text
+
 logger = structlog.get_logger()
 
 
@@ -86,7 +88,14 @@ def write_files_to_worktree(
             )
             continue
         abs_path.parent.mkdir(parents=True, exist_ok=True)
-        abs_path.write_text(source)
+        # POLYLENS run #3 P1 (KIMI Agent Swarm): the previous in-place
+        # ``write_text`` truncated the destination before writing. A
+        # SIGKILL or OOM mid-write left a half-empty file with no
+        # backup, which then went straight to the worktree's git
+        # commit. Atomic write via ``mkstemp + fsync + replace``
+        # guarantees either the old content (if interrupted) or the
+        # new content (if completed) — never a half-flushed mix.
+        atomic_write_text(abs_path, source)
         written += 1
 
     return written

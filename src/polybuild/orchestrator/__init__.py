@@ -137,13 +137,23 @@ def _resolve_config_root() -> Path:
         if (candidate / "routing.yaml").exists():
             return candidate
 
+    # POLYLENS run #3 P0 (Grok 4.3 web): the wheel install path was
+    # broken. ``[tool.hatch.build.targets.wheel.force-include]`` ships
+    # ``config/`` AT ``polybuild/config/`` (i.e. INSIDE the package),
+    # not next to it as ``site-packages/config/``. The previous walk
+    # ``pkg_root.parent / "config"`` would have looked at
+    # ``site-packages/config/`` which does not exist on a wheel install
+    # via ``uv tool install`` or pipx, raising ``RuntimeError`` for
+    # every non-editable user. We try the in-package layout first,
+    # keep the legacy sibling layout as a fallback for any historical
+    # build.
     try:
         import polybuild as _pkg
 
         pkg_root = Path(_pkg.__file__).parent
-        candidate = pkg_root.parent / "config"
-        if (candidate / "routing.yaml").exists():
-            return candidate
+        for candidate in (pkg_root / "config", pkg_root.parent / "config"):
+            if (candidate / "routing.yaml").exists():
+                return candidate
     except ImportError:
         pass
 

@@ -228,12 +228,15 @@ await run_polybuild(
 
 ### Installation
 
-```bash
-# 1. devcode v1.0 doit être disponible (sibling project, pas encore sur PyPI) :
-pip install -e ~/Developer/projects/devcode
+POLYLENS run #3 P0 (Grok + Gemini + Codex + DeepSeek convergent, v3.2.4) : l'extra `[devcode]` qui hard-codait `file:///Users/radu/...` a été retiré du `pyproject.toml` — il cassait `pip install` pour tout autre dev. La dépendance reste optionnelle ; il faut juste l'installer séparément :
 
-# 2. activer l'extra polybuild :
-pip install -e ".[devcode]"
+```bash
+# 1. installer devcode (sibling project, pas encore sur PyPI) — adapte le chemin :
+pip install -e ~/Developer/projects/devcode
+#    (ou git clone <ton fork>/devcode && pip install -e ./devcode)
+
+# 2. polybuild s'installe normalement (sans extra) :
+pip install -e .
 
 # 3. vérifier :
 polybuild run --brief brief.md --profile module_inedit_critique --scorer=devcode

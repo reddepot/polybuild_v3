@@ -772,10 +772,14 @@ class TestCostLog:
         usd = estimate_usd("google/gemini-3.1-pro-preview", 1_000_000, 1_000_000)
         assert usd == pytest.approx(6.25, rel=1e-3)
 
-    def test_estimate_usd_unknown_voice_returns_zero(self) -> None:
+    def test_estimate_usd_unknown_voice_returns_none(self) -> None:
+        # POLYLENS run #3 P2 (Gemini + Qwen + DeepSeek convergent):
+        # an unknown voice now returns ``None`` (instead of silently
+        # booking $0) so dashboards distinguish "we don't know" from
+        # "no work was done".
         from polybuild.audit.cost_log import estimate_usd
 
-        assert estimate_usd("totally/unknown", 100, 200) == 0.0
+        assert estimate_usd("totally/unknown", 100, 200) is None
 
     def test_estimate_usd_missing_tokens(self) -> None:
         from polybuild.audit.cost_log import estimate_usd

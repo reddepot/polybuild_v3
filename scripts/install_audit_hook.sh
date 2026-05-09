@@ -92,18 +92,43 @@ remove_block() {
     if [ ! -f "$HOOK_PATH" ]; then
         return 0
     fi
+    # POLYLENS run #3 P1 (Gemini 3.1 Pro): the previous Python block
+    # used ``in_block=True`` from start marker until end marker. If a
+    # user accidentally deleted (or edited away) the end marker but
+    # kept the start marker, the loop never flipped ``in_block`` back
+    # to False and silently truncated EVERY line after the start
+    # marker — including unrelated user-installed hooks below ours.
+    #
+    # New invariants:
+    #   - if both markers are present and balanced (count(start) ==
+    #     count(end) >= 1), strip every block between matching pairs.
+    #   - if the markers are present but unbalanced (one without the
+    #     other), refuse to truncate and emit a warning. The hook
+    #     remains in a half-installed state, which is still better
+    #     than silently nuking a user's other commands.
     python3 - "$HOOK_PATH" "$MARKER" "$END_MARKER" <<'PY'
 import sys
 path, start, end = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path, encoding="utf-8") as fh:
     src = fh.read()
+n_start = src.count(start)
+n_end = src.count(end)
+if n_start == 0 and n_end == 0:
+    sys.exit(0)
+if n_start != n_end:
+    sys.stderr.write(
+        f"warning: unbalanced polybuild audit markers in {path} "
+        f"(start={n_start}, end={n_end}). Refusing to truncate; please "
+        "remove the markers manually before re-running --uninstall.\n"
+    )
+    sys.exit(2)
 out = []
 in_block = False
 for line in src.splitlines(keepends=True):
-    if start in line:
+    if start in line and not in_block:
         in_block = True
         continue
-    if end in line:
+    if end in line and in_block:
         in_block = False
         continue
     if not in_block:
@@ -112,11 +137,21 @@ result = "".join(out).rstrip() + "\n" if out else ""
 with open(path, "w", encoding="utf-8") as fh:
     fh.write(result)
 PY
+    rc=$?
+    if [ "$rc" -eq 2 ]; then
+        echo "polybuild: hook left untouched due to unbalanced markers" >&2
+        return 1
+    fi
+    return 0
 }
 
 if [ "$UNINSTALL" = "1" ]; then
     if [ -f "$HOOK_PATH" ]; then
-        remove_block
+        if ! remove_block; then
+            echo "polybuild audit hook NOT removed from $HOOK_PATH " \
+                 "(see warning above). Aborting." >&2
+            exit 1
+        fi
         # If the file is now empty (or contains only the shebang we
         # injected), unlink it so future installs start clean.
         if [ ! -s "$HOOK_PATH" ] || [ "$(wc -l <"$HOOK_PATH" | tr -d ' ')" -le "1" ]; then
@@ -130,7 +165,15 @@ if [ "$UNINSTALL" = "1" ]; then
 fi
 
 # Install path: idempotent — strip any prior block before re-injecting.
-remove_block
+# POLYLENS run #3 P1: if the existing markers are unbalanced (the user
+# edited the hook by hand and broke the END_MARKER), refuse to install
+# rather than risk creating a second block on top of an unrelated
+# half-block.
+if ! remove_block; then
+    echo "polybuild: refusing to install on top of an unbalanced hook " \
+         "(remove the leftover markers manually first)" >&2
+    exit 1
+fi
 
 if [ ! -f "$HOOK_PATH" ]; then
     printf '#!/usr/bin/env bash\nset -e\n\n' >"$HOOK_PATH"

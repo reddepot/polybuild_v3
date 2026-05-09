@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+import structlog
+
 if TYPE_CHECKING:
     from polybuild.models import (
         AuditReport,
@@ -38,6 +40,8 @@ if TYPE_CHECKING:
         VoiceConfig,
         VoiceScore,
     )
+
+logger = structlog.get_logger()
 
 
 # Signature of ``polybuild.orchestrator.save_checkpoint``. Injected so a
@@ -67,6 +71,17 @@ class StrategyOutcome:
     this defensively but having the invariant on the dataclass itself
     catches programmer errors at construction time, with a clearer
     traceback than a downstream attribute access).
+
+    POLYLENS run #3 P1 (Grok 4.3): the previous validator allowed any
+    combination on the abort path, so a strategy could legitimately
+    construct ``aborted=True`` *with* ``winner_result`` populated (e.g.
+    ``phase_5_blocked_p0`` returned the would-be winner alongside the
+    abort flag). Downstream code that consumed the outcome by looking
+    at ``winner_result`` first then checking ``aborted`` could
+    accidentally promote a blocked candidate. The contract is now
+    bidirectional: ``aborted=True`` *requires* both winner artefacts to
+    be ``None`` so the abort/winner mutual-exclusion is structurally
+    enforced.
     """
 
     voices: list[VoiceConfig]
@@ -82,7 +97,40 @@ class StrategyOutcome:
 
     def __post_init__(self) -> None:
         if self.aborted:
-            return  # any combination is allowed on the abort path
+            # POLYLENS run #3 P1 (Grok 4.3): an aborted outcome that
+            # also carries winner artefacts is a contradiction — the
+            # ``phase_5_blocked_p0`` path used to emit
+            # ``aborted=True, winner_result=<the blocked candidate>,
+            # winner_score=<its score>`` which let downstream readers
+            # accidentally promote a candidate the strategy explicitly
+            # rejected. Force-null both fields and emit a single
+            # warning naming the would-be winner so the abort path is
+            # still debuggable. ``frozen=True`` rules out direct
+            # assignment, so we go through ``object.__setattr__``.
+            if self.winner_result is not None or self.winner_score is not None:
+                stowaway_voice = (
+                    self.winner_result.voice_id
+                    if self.winner_result is not None
+                    else (
+                        self.winner_score.voice_id
+                        if self.winner_score is not None
+                        else "unknown"
+                    )
+                )
+                logger.warning(
+                    "strategy_outcome_aborted_with_winner_dropped",
+                    abort_reason=self.abort_reason,
+                    dropped_winner_voice_id=stowaway_voice,
+                    hint=(
+                        "An aborted StrategyOutcome cannot carry winner "
+                        "artefacts. Both fields forced to None — log the "
+                        "candidate before constructing the outcome if you "
+                        "need the data downstream."
+                    ),
+                )
+                object.__setattr__(self, "winner_result", None)
+                object.__setattr__(self, "winner_score", None)
+            return
         missing = [
             name
             for name, value in (

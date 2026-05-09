@@ -76,6 +76,21 @@ _FAMILY_MAP: dict[str, str] = {
     # OpenRouter family slugs used by polybuild.adapters.__init__
     "zai": "zhipu",
     "qwen": "alibaba",
+    # POLYLENS run #3 P1 (KIMI Agent Swarm): the Ollama local adapter
+    # (``adapters/ollama_local.py``) sets ``family="alibaba"`` directly
+    # rather than ``"qwen"``. Both should map to the same DEVCODE
+    # ``Family.ALIBABA`` so a Qwen voice via Ollama and a Qwen voice
+    # via OpenRouter are treated as the same provider for the
+    # cross-cultural supermajority check. Without this entry, Ollama
+    # Qwen runs raised ``ValueError`` and crashed ``--scorer=devcode``
+    # (or fell back to naive abstain via the v3.2.4 try/except).
+    "alibaba": "alibaba",
+    # NOTE: ``"xai"`` (Grok via OpenRouter, ``adapters/__init__.py:83``)
+    # is intentionally absent. devcode v1.0 ``Family`` enum does not
+    # include ``xai`` — adding it here would still raise
+    # ``Family("xai")`` downstream. Until devcode publishes a Family
+    # entry for xAI, Grok voices fall through to the naive-abstain
+    # fallback wired in ``DevcodeScorer.score`` (POLYLENS run #3 P1).
 }
 
 

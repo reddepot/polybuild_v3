@@ -63,8 +63,12 @@ MAX_DIFF_LINES = 200
 # passed to a CLI as argv. macOS ARG_MAX is ~1 MB — we cap well under
 # that (~64K tokens at 4 bytes/token average).
 MAX_DIFF_BYTES = 256_000
-MAX_COST_USD = 0.30
 DEFAULT_AXES: tuple[Axis, ...] = ("A_security", "C_tests", "G_adversarial")
+# POLYLENS run #3 P2 (deepseek-expert): the previous ``MAX_COST_USD``
+# constant was exported but never referenced — a dead claim that the
+# audit "stays under $0.30". Either enforce a cap or remove the
+# constant. Removed: a real cost ceiling is upstream's job (the user
+# can disable Chinese voices via the env opt-in if budget is tight).
 
 # Validation: commit SHA must be hex chars only, 7-64 chars (POLYLENS-FIX-6
 # P2). Anything else is rejected before reaching ``git show`` so a poisoned
@@ -94,14 +98,37 @@ _CURRENT_COMMIT_SHA: contextvars.ContextVar[str | None] = contextvars.ContextVar
 # cover the most common shapes; bespoke secrets (custom enterprise
 # tokens, magic constants) will still leak and require a private (CLI-only)
 # voice pair in such repos.
+#
+# POLYLENS run #3 P0 (Gemini + Codex + DeepSeek + Grok convergent): the
+# 2026 ecosystem moved past ``ghp_/gho_/sk-`` — added GitHub
+# fine-grained PAT (``github_pat_``), GitHub server-token (``ghs_``),
+# Google Generative AI (``AIza``), HuggingFace (``hf_``), Stripe live
+# (``sk_live_``). The regex now matches what an attacker would
+# actually leak in 2026.
 _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # AWS access key id (always exactly this prefix + 16 chars)
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED-AWS-ACCESS-KEY]"),
     (re.compile(r"\bASIA[0-9A-Z]{16}\b"), "[REDACTED-AWS-STS-KEY]"),
-    # Github PAT
+    # Github classic PAT + OAuth
     (re.compile(r"\bghp_[A-Za-z0-9]{30,}\b"), "[REDACTED-GH-PAT]"),
     (re.compile(r"\bgho_[A-Za-z0-9]{30,}\b"), "[REDACTED-GH-OAUTH]"),
-    # OpenAI / Anthropic style keys
+    # Github server token (Actions/runner)
+    (re.compile(r"\bghs_[A-Za-z0-9]{30,}\b"), "[REDACTED-GH-SERVER]"),
+    # Github fine-grained PAT (2023+, 82+ chars after the prefix)
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}\b"), "[REDACTED-GH-FG-PAT]"),
+    # Google Generative AI / Cloud — ``AIza`` prefix + 30+ char body.
+    # The Google docs say "39 chars" but in practice the body length
+    # ranges 35-40+ depending on key tier; ``{30,}`` is permissive
+    # enough to catch them all without false-positives on
+    # legitimate ``AIzaSomething`` strings (the prefix + 30 chars is
+    # already very specific).
+    (re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}\b"), "[REDACTED-GOOGLE-KEY]"),
+    # HuggingFace user token
+    (re.compile(r"\bhf_[A-Za-z0-9]{30,}\b"), "[REDACTED-HF-TOKEN]"),
+    # Stripe live secret keys (and underscored Stripe-style tokens)
+    (re.compile(r"\bsk_live_[A-Za-z0-9]{20,}\b"), "[REDACTED-STRIPE-LIVE]"),
+    (re.compile(r"\brk_live_[A-Za-z0-9]{20,}\b"), "[REDACTED-STRIPE-RESTRICTED]"),
+    # OpenAI / Anthropic / OpenRouter style keys (sk- prefix, no underscore)
     (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"), "[REDACTED-LLM-KEY]"),
     # JWT (three base64url segments separated by dots)
     (
@@ -661,29 +688,59 @@ def _parse_voice_output(
     trust partial / poisoned findings.
 
     POLYLENS run #2 P1 (gpt-5.5 + gemini + qwen3-max convergent): a
-    "canary anywhere" check is gameable — the diff can coerce the voice
-    to echo the canary early and then emit junk after, suppressing any
-    real findings. We now require the canary on the LAST non-empty line.
+    "canary anywhere" check was gameable — the diff could coerce the
+    voice to echo the canary early and then emit junk after, suppressing
+    any real findings. The original fix used ``stripped.endswith(canary)``
+    which closed the trailing-junk vector but **not** the canary-mid +
+    canary-end vector flagged by POLYLENS run #3 (codex-gpt-5.5).
+
+    POLYLENS run #3 P1 (codex-gpt-5.5 + qwen3.6-max-preview convergent):
+    we now split the response into lines, trim each, drop empties and
+    require the canary on the LAST non-empty line **AND** absent from
+    every earlier non-empty line. A double-canary response is treated as
+    prompt-injection and discarded.
+
+    POLYLENS run #3 P0 (qwen3.6-max-preview + deepseek-expert convergent):
+    every parsed ``message`` and ``file`` field is now passed through
+    ``_redact_secrets`` before being persisted to the backlog JSONL. If
+    the diff redaction misses a secret (eg. an enterprise token shape we
+    don't pattern-match) and the voice quotes it back inside a finding,
+    the secret would otherwise land in plaintext in
+    ``~/.polybuild/audit/audit_backlog.jsonl``. Output redaction is the
+    second-stage net.
     """
-    stripped = raw.strip()
-    if not stripped.endswith(_AUDIT_CANARY):
+    non_empty_lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if not non_empty_lines or non_empty_lines[-1] != _AUDIT_CANARY:
         logger.warning(
             "audit_canary_missing_or_misplaced",
             voice_id=voice_id,
             commit_sha=commit_sha,
             hint=(
-                "Voice response did not END with the canary. Possible "
-                "prompt-injection via diff content. Findings discarded."
+                "Voice response did not END with the canary on its own "
+                "final line. Possible prompt-injection via diff content. "
+                "Findings discarded."
+            ),
+        )
+        return []
+    if any(ln == _AUDIT_CANARY for ln in non_empty_lines[:-1]):
+        # Double-canary: an injected diff coerced the voice to echo the
+        # canary early to "satisfy" downstream parsing while emitting
+        # malicious content between the two canaries. Fail closed.
+        logger.warning(
+            "audit_canary_duplicate",
+            voice_id=voice_id,
+            commit_sha=commit_sha,
+            hint=(
+                "Voice response contains the canary BEFORE its final "
+                "line. Likely prompt-injection (canary-mid + canary-end). "
+                "Findings discarded."
             ),
         )
         return []
 
     findings: list[BacklogFinding] = []
-    for raw_line in raw.splitlines():
-        line = raw_line.strip()
-        if line == _AUDIT_CANARY:
-            continue
-        if not line or not _JSON_LINE_RE.match(line):
+    for line in non_empty_lines[:-1]:  # skip the trailing canary
+        if not _JSON_LINE_RE.match(line):
             continue
         try:
             obj = json.loads(line)
@@ -710,22 +767,28 @@ def _parse_voice_output(
         axis: Axis = axis_raw  # type: ignore[assignment]
         severity: Severity = severity_raw  # type: ignore[assignment]
         line_no = line_no_raw if isinstance(line_no_raw, int) else None
+        # POLYLENS run #3 P0 — second-stage secret redaction. The diff
+        # is sanitised on the way IN (`_build_prompt` → `_redact_secrets`)
+        # but a voice can still quote a leaked secret in its own
+        # `message` or `file` field. Redact outgoing too.
+        message_safe = _redact_secrets(message)
+        file_safe = _redact_secrets(file)
         fingerprint = compute_fingerprint(
             commit_sha=commit_sha,
-            file=file,
+            file=file_safe,
             line=line_no,
             axis=axis,
-            message=message,
+            message=message_safe,
         )
         findings.append(
             BacklogFinding(
                 fingerprint=fingerprint,
                 commit_sha=commit_sha,
-                file=file,
+                file=file_safe,
                 line=line_no,
                 axis=axis,
                 severity=severity,
-                message=message,
+                message=message_safe,
                 voice=voice_id,
             )
         )
@@ -836,7 +899,6 @@ async def audit_commit(
 
 __all__ = [
     "DEFAULT_AXES",
-    "MAX_COST_USD",
     "MAX_DIFF_LINES",
     "VOICE_TIMEOUT_S",
     "VoiceCaller",

@@ -46,10 +46,12 @@ _OPENROUTER_PRICING: dict[str, tuple[float, float]] = {
     "anthropic/claude-opus-4-7":    (15.00, 75.00),  # rarely used by audit
 }
 
-# Default fallback if a voice slug is missing from the pricing table —
-# log $0 so the entry is still recorded but the user knows it isn't
-# costed (NaN would break dashboards).
-_UNKNOWN_PRICING: tuple[float, float] = (0.0, 0.0)
+# POLYLENS run #3 P2 (Gemini + Qwen + DeepSeek convergent): the
+# ``_UNKNOWN_PRICING = (0.0, 0.0)`` fallback was removed because
+# silently booking $0 for unpriced voices distorted budget review.
+# ``estimate_usd`` now returns ``None`` for unknown slugs and the
+# summary renders that as ``-`` so the operator sees explicit gaps in
+# the pricing table instead of a misleading green column.
 
 
 def cost_log_path(override: Path | None = None) -> Path:
@@ -60,7 +62,15 @@ VoicePool = Literal["western", "chinese", "unknown"]
 
 
 class VoiceCostEntry(BaseModel):
-    """One audit-time voice call cost record."""
+    """One audit-time voice call cost record.
+
+    POLYLENS run #3 P2 (Gemini + Qwen + DeepSeek convergent):
+    ``estimated_usd`` is now ``float | None``. ``None`` flags an
+    unpriced voice (slug missing from ``_OPENROUTER_PRICING``); the
+    summary table renders ``-`` for those rows so the operator sees
+    explicit "we don't know" rather than a misleading ``$0.00`` that
+    could mask budget dérive.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -70,7 +80,7 @@ class VoiceCostEntry(BaseModel):
     commit_sha: str | None = None
     tokens_prompt: int | None = None
     tokens_completion: int | None = None
-    estimated_usd: float = 0.0
+    estimated_usd: float | None = 0.0
     latency_s: float | None = None
     success: bool = True
     timestamp: datetime
@@ -80,16 +90,23 @@ def estimate_usd(
     voice_id: str,
     tokens_prompt: int | None,
     tokens_completion: int | None,
-) -> float:
+) -> float | None:
     """Compute USD cost for a voice call given token counts.
 
-    Returns ``0.0`` if either token count is missing or the voice is not
-    in the pricing table — never raises.
+    Returns ``0.0`` when token counts are missing (no work was done so
+    cost is genuinely zero). Returns **``None``** when the voice slug
+    is not in ``_OPENROUTER_PRICING`` (the cost is unknown — silently
+    booking it as $0 distorts monthly budget review). Never raises.
 
     POLYLENS run #2 P2 (gemini): OpenRouter occasionally returns token
     counts as strings; the multiplication would otherwise raise
     ``TypeError`` and crash the cost-log writer. Coerce defensively to
     ``int`` and fall back to 0.0 on any conversion failure.
+
+    POLYLENS run #3 P2 (Gemini + Qwen + DeepSeek convergent): the
+    previous fallback ``(0.0, 0.0)`` masked unpriced voices. Now we
+    distinguish "no tokens consumed" (``0.0``) from "no pricing
+    available" (``None``).
     """
     if tokens_prompt is None or tokens_completion is None:
         return 0.0
@@ -98,7 +115,18 @@ def estimate_usd(
         out_tok = int(tokens_completion)
     except (TypeError, ValueError):
         return 0.0
-    in_per_1m, out_per_1m = _OPENROUTER_PRICING.get(voice_id, _UNKNOWN_PRICING)
+    pricing = _OPENROUTER_PRICING.get(voice_id)
+    if pricing is None:
+        logger.warning(
+            "cost_log_voice_not_priced",
+            voice_id=voice_id,
+            hint=(
+                "Add the voice to _OPENROUTER_PRICING to record real "
+                "spend. Until then this call is logged as estimated_usd=None."
+            ),
+        )
+        return None
+    in_per_1m, out_per_1m = pricing
     return round(
         (in_tok * in_per_1m + out_tok * out_per_1m) / 1_000_000.0,
         6,
@@ -198,6 +226,13 @@ def summarize_costs(
 
     Includes call count, success rate, total tokens (in+out) and
     cumulative USD. Empty windows return ``"no audit calls in window"``.
+
+    POLYLENS run #3 P2: when an entry has ``estimated_usd=None`` (slug
+    missing from the pricing table) the row's USD column renders as
+    ``-`` and the voice flag ``has_unpriced_calls`` surfaces in a
+    warning footer. This avoids the previous behaviour where unpriced
+    voices were quietly booked at $0 and inflated the apparent
+    "savings" of switching to CLI-paid voices.
     """
     cutoff = _window_to_cutoff(window)
     entries = read_cost_log(since=cutoff, cost_dir=cost_dir)
@@ -211,31 +246,43 @@ def summarize_costs(
     rows = []
     total_usd = 0.0
     total_calls = len(entries)
+    voices_with_unpriced = []
     for voice_id, calls in by_voice.items():
-        usd = sum(c.estimated_usd for c in calls)
+        priced = [c for c in calls if c.estimated_usd is not None]
+        unpriced_count = len(calls) - len(priced)
+        usd = sum(c.estimated_usd for c in priced if c.estimated_usd is not None)
         total_usd += usd
         n = len(calls)
         ok = sum(1 for c in calls if c.success)
         toks_in = sum(c.tokens_prompt or 0 for c in calls)
         toks_out = sum(c.tokens_completion or 0 for c in calls)
-        rows.append((voice_id, n, ok, toks_in, toks_out, usd))
+        rows.append((voice_id, n, ok, toks_in, toks_out, usd, unpriced_count))
+        if unpriced_count > 0:
+            voices_with_unpriced.append((voice_id, unpriced_count))
     rows.sort(key=lambda r: r[5], reverse=True)
 
     lines = [
         f"# POLYLENS audit cost — window={window}, "
         f"cutoff={cutoff.isoformat() if cutoff else 'all-time'}",
         "",
-        f"Total calls: {total_calls} | Total USD: ${total_usd:.4f}",
+        f"Total calls: {total_calls} | Total priced USD: ${total_usd:.4f}",
         "",
         f"{'voice':<32} {'calls':>5} {'ok':>4} "
         f"{'tok_in':>9} {'tok_out':>9} {'USD':>9}",
         "-" * 72,
     ]
-    for voice_id, n, ok, toks_in, toks_out, usd in rows:
+    for voice_id, n, ok, toks_in, toks_out, usd, unpriced in rows:
+        usd_str = "-" if unpriced == n else f"{usd:>9.4f}"
         lines.append(
             f"{voice_id:<32} {n:>5} {ok:>4} "
-            f"{toks_in:>9} {toks_out:>9} {usd:>9.4f}"
+            f"{toks_in:>9} {toks_out:>9} {usd_str:>9}"
         )
+    if voices_with_unpriced:
+        lines.append("")
+        lines.append("⚠ unpriced voices (cost shown as '-' — add to "
+                     "_OPENROUTER_PRICING):")
+        for voice_id, unpriced in voices_with_unpriced:
+            lines.append(f"  {voice_id} ({unpriced} call(s))")
     return "\n".join(lines) + "\n"
 
 

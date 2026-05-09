@@ -82,14 +82,35 @@ def sanitize_prompt_context(raw: str) -> str:
     The cleaning order matters: NFKC first so that homoglyph variants of
     e.g. ``<!--`` collapse to ASCII before the comment regex runs.
 
-    Args:
-        raw: arbitrary user-supplied text (AGENTS.md, project_ctx, etc.)
-
-    Returns:
-        Cleaned text — empty string if input is empty/None-ish.
+    POLYLENS run #3 P3 (KIMI Agent Swarm): the previous implementation
+    ran the suspicious-directive check *after* HTML comment stripping.
+    A directive hidden inside ``<!-- ignore previous instructions -->``
+    was therefore silently removed without raising any warning, blinding
+    the operator to the attack. We now scan the **raw** text first
+    (still-attacker-controlled bytes) and emit a distinct warning, then
+    scan the cleaned text again so directives that survive sanitisation
+    (rare — the strippers are aggressive) still surface their own
+    warning.
     """
     if not raw:
         return ""
+    # POLYLENS run #3 P3: pre-sanitize directive scan. Catches HTML/MD
+    # comment-hidden injection attempts before the strip pass erases
+    # them. We do an NFKC-normalised lower compare so homoglyph
+    # variants of "ignore" don't slip past.
+    raw_lower = unicodedata.normalize("NFKC", raw).lower()
+    for needle in _SUSPICIOUS_DIRECTIVES:
+        if needle in raw_lower:
+            logger.warning(
+                "prompt_context_suspicious_directive_raw",
+                pattern=needle,
+                hint=(
+                    "Directive detected in the raw context BEFORE "
+                    "comment/script stripping. The cleaned output may "
+                    "look benign but the source attempted injection."
+                ),
+            )
+
     cleaned = unicodedata.normalize("NFKC", raw)
     # Round 10.2.1 fix [POLYLENS honeypot 1]: nested comments like
     # ``<!-- outer <!-- inner --> still here -->`` survived a single

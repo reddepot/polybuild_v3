@@ -258,7 +258,14 @@ class TestSoloPipelineAbortPaths:
 
         assert outcome.aborted is True
         assert outcome.abort_reason == "solo_phase_4_p0_no_triade"
-        assert outcome.winner_result is not None  # we still surface what we built
+        # POLYLENS run #3 P1 (Grok 4.3): an aborted StrategyOutcome
+        # must NOT carry winner artefacts — the new invariant force-
+        # nulls them via __post_init__ to prevent downstream code from
+        # accidentally promoting a candidate the strategy explicitly
+        # rejected. The audit findings are still surfaced so the user
+        # sees why the run aborted.
+        assert outcome.winner_result is None
+        assert outcome.winner_score is None
         assert outcome.audit is not None
         assert any(f.severity == Severity.P0 for f in outcome.audit.findings)
 
