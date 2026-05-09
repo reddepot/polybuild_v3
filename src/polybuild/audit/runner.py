@@ -123,13 +123,14 @@ def _redact_secrets(text: str) -> str:
 
 
 def _is_remote_audit_allowed() -> bool:
-    """POLYLENS-FIX-1 P0: opt-in switch for remote (OpenRouter) voices.
+    """POLYLENS-FIX-1 P0 + run #2 P1: opt-in switch for ALL voice paths.
 
-    Defaults to **disabled** — the audit subsystem only fires the local
-    Western CLIs (codex / gemini / kimi) until the user explicitly sets
-    ``POLYBUILD_AUDIT_REMOTE_OPT_IN=1``. This prevents accidental leakage
-    of proprietary code via ``polybuild audit drain`` after a
-    ``pip install`` on a sensitive repo.
+    Defaults to **disabled**. Originally this only gated the OpenRouter
+    HTTP path; POLYLENS run #2 (gpt-5.5) flagged that the Western CLIs
+    (codex / gemini / kimi) also upload prompts to cloud SaaS — they
+    are not local inference. The audit subsystem now treats every voice
+    call as remote and gates them all behind the same flag. Set
+    ``POLYBUILD_AUDIT_REMOTE_OPT_IN=1`` to enable.
     """
     import os
 
@@ -155,11 +156,30 @@ async def default_voice_caller(voice_id: str, prompt: str) -> str:
     network error). A failed voice produces no findings — the rotation
     will reach the next one on the next audit cycle.
 
+    POLYLENS run #2 P1: every voice path uploads the prompt to a
+    third-party SaaS (codex → OpenAI, gemini → Google, kimi → Moonshot,
+    chinese pool → OpenRouter). The opt-in gate now wraps the dispatch
+    so a single env var (``POLYBUILD_AUDIT_REMOTE_OPT_IN=1``) covers
+    every path. Without the opt-in we never call any voice, period.
+
     FEAT-3: a persistent SQLite-backed response cache wraps both
     branches. Cache hit returns the previous response in microseconds;
     cache miss falls through to the upstream call and the response is
-    stored on success. Set ``POLYBUILD_LLM_CACHE_DISABLE=1`` to bypass.
+    stored on success. Set ``POLYBUILD_LLM_CACHE_ENABLE=1`` to enable
+    (default off — see :mod:`polybuild.audit.cache`).
     """
+    if not _is_remote_audit_allowed():
+        logger.info(
+            "audit_voice_skipped_no_opt_in",
+            voice_id=voice_id,
+            hint=(
+                "Set POLYBUILD_AUDIT_REMOTE_OPT_IN=1 to enable audit voices. "
+                "Codex/Gemini/Kimi CLIs and OpenRouter all upload prompts "
+                "to third-party SaaS — none are local inference."
+            ),
+        )
+        return ""
+
     from polybuild.audit.cache import cache_get, cache_put, make_cache_key
 
     cache_key = make_cache_key(voice_id, prompt)

@@ -792,9 +792,16 @@ class TestDigest:
 
 class TestDefaultVoiceCaller:
     @pytest.mark.asyncio
-    async def test_unknown_voice_returns_empty(self) -> None:
+    async def test_unknown_voice_returns_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from polybuild.audit.runner import default_voice_caller
 
+        # POLYLENS run #2 P1: opt-in covers ALL voice paths, so each
+        # of these tests must enable it explicitly to reach the path
+        # they actually exercise (otherwise the gate short-circuits
+        # first and the result is "" for the wrong reason).
+        monkeypatch.setenv("POLYBUILD_AUDIT_REMOTE_OPT_IN", "1")
         result = await default_voice_caller("totally-fake-voice-id", "prompt")
         assert result == ""
 
@@ -804,6 +811,7 @@ class TestDefaultVoiceCaller:
     ) -> None:
         from polybuild.audit.runner import default_voice_caller
 
+        monkeypatch.setenv("POLYBUILD_AUDIT_REMOTE_OPT_IN", "1")
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         result = await default_voice_caller("z-ai/glm-5.1", "prompt")
         assert result == ""
@@ -814,7 +822,22 @@ class TestDefaultVoiceCaller:
     ) -> None:
         from polybuild.audit.runner import default_voice_caller
 
+        monkeypatch.setenv("POLYBUILD_AUDIT_REMOTE_OPT_IN", "1")
         # Pretend ``codex`` is not on PATH.
         with patch("shutil.which", return_value=None):
             result = await default_voice_caller("codex-gpt-5.5", "prompt")
         assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_no_opt_in_skips_all_voices(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """POLYLENS run #2 P1: without the opt-in env var, every voice
+        path returns '' before any subprocess or HTTP call."""
+        from polybuild.audit.runner import default_voice_caller
+
+        monkeypatch.delenv("POLYBUILD_AUDIT_REMOTE_OPT_IN", raising=False)
+        # Even a Western voice with the binary on PATH must be skipped.
+        with patch("shutil.which", return_value="/usr/bin/codex"):
+            assert await default_voice_caller("codex-gpt-5.5", "p") == ""
+        assert await default_voice_caller("z-ai/glm-5.1", "p") == ""
