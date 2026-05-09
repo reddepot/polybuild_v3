@@ -206,16 +206,31 @@ async def default_voice_caller(voice_id: str, prompt: str) -> str:
         logger.debug("audit_cache_hit", voice_id=voice_id, key_first_8=cache_key[:8])
         return cached
 
+    # POLYLENS run #2 P2 (Kimi finding #6): the dispatchers now return
+    # ``(response, tokens_total, latency_s)`` so we can persist the
+    # cost-relevant metadata alongside the cached response. A future
+    # cache hit then knows exactly how much wall-clock and how many
+    # tokens were saved by skipping the upstream call.
     if voice_id.startswith(("codex-", "gemini-", "kimi-")):
-        response = await _call_western_cli(voice_id, prompt)
+        response, tokens_total, latency_s = await _call_western_cli(
+            voice_id, prompt
+        )
     elif "/" in voice_id:  # OpenRouter slug (provider/model form)
-        response = await _call_openrouter(voice_id, prompt)
+        response, tokens_total, latency_s = await _call_openrouter(
+            voice_id, prompt
+        )
     else:
         logger.warning("audit_voice_unknown", voice_id=voice_id)
         return ""
 
     if response:
-        cache_put(cache_key, voice_id=voice_id, response=response)
+        cache_put(
+            cache_key,
+            voice_id=voice_id,
+            response=response,
+            tokens_total=tokens_total,
+            latency_s=latency_s,
+        )
     return response
 
 
@@ -253,23 +268,35 @@ def _western_cli_command(voice_id: str) -> list[str] | None:
     return None
 
 
-async def _call_western_cli(voice_id: str, prompt: str) -> str:
+async def _call_western_cli(
+    voice_id: str, prompt: str
+) -> tuple[str, int | None, float | None]:
     """Spawn the matching CLI binary, send the prompt as the last argv,
-    capture stdout. Silently returns ``""`` on any failure.
+    capture stdout. Silently returns ``("", None, None)`` on any failure.
+
+    Returns a 3-tuple ``(response, tokens_total, latency_s)`` so the
+    caller can persist cost metadata alongside the cached response
+    (POLYLENS run #2 P2, Kimi finding #6). Western CLIs do not expose
+    a token count (they upload prompts under the user's existing
+    subscription with no per-call usage payload), so ``tokens_total``
+    is always ``None`` for this path.
 
     POLYLENS run #2 P1 (Kimi finding #1): a non-zero exit code from the
-    CLI MUST yield ``""``. Returning the stdout of a failed call would
-    pipe a CLI error message (rate-limit JSON, login prompt, etc.) into
-    the JSON-Lines parser, which would either fail the canary check
-    (correct outcome) or — worse — happen to contain text that matches
-    a finding shape and produce false positives. The new explicit
-    ``returncode != 0`` branch makes the silent-failure invariant
-    documented in the docstring an actual code-level guarantee.
+    CLI MUST yield ``("", None, None)``. Returning the stdout of a
+    failed call would pipe a CLI error message (rate-limit JSON, login
+    prompt, etc.) into the JSON-Lines parser, which would either fail
+    the canary check (correct outcome) or — worse — happen to contain
+    text that matches a finding shape and produce false positives. The
+    new explicit ``returncode != 0`` branch makes the silent-failure
+    invariant documented in the docstring an actual code-level guarantee.
     """
+    import time
+
     argv = _western_cli_command(voice_id)
     if argv is None:
-        return ""
+        return "", None, None
     argv = [*argv, prompt]
+    t0 = time.monotonic()
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -287,7 +314,7 @@ async def _call_western_cli(voice_id: str, prompt: str) -> str:
                 proc.kill()
             await asyncio.sleep(0)  # let kill propagate
             logger.warning("audit_voice_timeout", voice_id=voice_id)
-            return ""
+            return "", None, None
         if proc.returncode != 0:
             logger.warning(
                 "audit_voice_nonzero_exit",
@@ -295,20 +322,29 @@ async def _call_western_cli(voice_id: str, prompt: str) -> str:
                 returncode=proc.returncode,
                 stderr_first_300=stderr_b.decode("utf-8", errors="replace")[:300],
             )
-            return ""
-        return stdout_b.decode("utf-8", errors="replace")
+            return "", None, None
+        latency_s = time.monotonic() - t0
+        return stdout_b.decode("utf-8", errors="replace"), None, latency_s
     except (OSError, FileNotFoundError):
-        return ""
+        return "", None, None
 
 
-async def _call_openrouter(voice_id: str, prompt: str) -> str:
+async def _call_openrouter(
+    voice_id: str, prompt: str
+) -> tuple[str, int | None, float | None]:
     """Call the OpenRouter chat-completions endpoint.
 
-    Reads the API key from ``OPENROUTER_API_KEY`` env var. Returns ``""``
-    on any failure (missing key, timeout, non-2xx, missing httpx, or
-    remote audit not opted-in via ``POLYBUILD_AUDIT_REMOTE_OPT_IN=1`` —
-    the audit subsystem treats remote voices as opt-in to prevent
-    accidental code leakage on sensitive repos).
+    Reads the API key from ``OPENROUTER_API_KEY`` env var. Returns
+    ``("", None, None)`` on any failure (missing key, timeout, non-2xx,
+    missing httpx, or remote audit not opted-in via
+    ``POLYBUILD_AUDIT_REMOTE_OPT_IN=1`` — the audit subsystem treats
+    remote voices as opt-in to prevent accidental code leakage on
+    sensitive repos).
+
+    Returns a 3-tuple ``(response, tokens_total, latency_s)`` so the
+    caller can persist cost metadata alongside the cached response
+    (POLYLENS run #2 P2, Kimi finding #6). ``tokens_total`` is the
+    OpenRouter ``usage.total_tokens`` field when available.
 
     FEAT-1: every successful or failed call is logged to the cost log
     (``~/.polybuild/audit/cost_log.jsonl``) so the user can review
@@ -371,18 +407,18 @@ async def _call_openrouter(voice_id: str, prompt: str) -> str:
                 "stay enabled regardless."
             ),
         )
-        return ""
+        return "", None, None
 
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         logger.warning("audit_openrouter_no_key", voice_id=voice_id)
         _log_cost(success=False)
-        return ""
+        return "", None, None
 
     try:
         import httpx
     except ImportError:
-        return ""
+        return "", None, None
 
     payload: dict[str, Any] = {
         "model": voice_id,
@@ -407,26 +443,30 @@ async def _call_openrouter(voice_id: str, prompt: str) -> str:
                 status=resp.status_code,
             )
             _log_cost(success=False)
-            return ""
+            return "", None, None
         data = resp.json()
         choices = data.get("choices", [])
         if not choices:
             _log_cost(success=False)
-            return ""
+            return "", None, None
         text = choices[0].get("message", {}).get("content", "")
         if not isinstance(text, str):
             _log_cost(success=False)
-            return ""
+            return "", None, None
         usage = data.get("usage") or {}
+        tokens_prompt = usage.get("prompt_tokens")
+        tokens_completion = usage.get("completion_tokens")
+        tokens_total = usage.get("total_tokens")
+        latency_s = time.monotonic() - t0
         _log_cost(
-            tokens_prompt=usage.get("prompt_tokens"),
-            tokens_completion=usage.get("completion_tokens"),
+            tokens_prompt=tokens_prompt,
+            tokens_completion=tokens_completion,
             success=True,
         )
-        return text
+        return text, tokens_total, latency_s
     except (httpx.HTTPError, ValueError, KeyError):
         _log_cost(success=False)
-        return ""
+        return "", None, None
 
 
 # ────────────────────────────────────────────────────────────────
