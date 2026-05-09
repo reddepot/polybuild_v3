@@ -1,25 +1,21 @@
 # POLYBUILD v3 — Spécification d'architecture
 
-> **Version** : 3.0-draft
-> **Date** : 2026-05-03
-> **Auteur** : reddie (médecin du travail SPSTI, dev Python solo)
-> **Statut** : Acquis convergents intégrés (rounds 1-3). Failles résiduelles round 4 en attente.
+> **Version courante** : 3.2.6 (stable). Le squelette d'architecture
+> ci-dessous reste la référence de design ; pour l'état actuel
+> d'implémentation, voir le code et les tests.
 > **Mantra** : *Trois voix orthogonales bâtissent. Les tests tranchent. Les snipers cognitifs polissent.*
 
 ---
 
 ## Méta — Équipe consultative ayant designé POLYBUILD
 
-POLYBUILD v3 est lui-même le produit d'une orchestration multi-LLM appliquée à sa propre conception. Quatre rounds successifs de consultation ont permis de converger sur l'architecture présentée. **Round 4 (en cours)** intègre désormais **DeepSeek** dans l'équipe, qui passe de 5 à **6 modèles**.
+POLYBUILD v3 est lui-même le produit d'une orchestration multi-LLM
+appliquée à sa propre conception : 4 rounds successifs de consultation
+ont permis de converger sur l'architecture présentée. L'équipe finale
+(Round 4) réunissait Claude Opus 4.7, GPT-5.5, Gemini 3.1 Pro, Kimi K2.6,
+DeepSeek V4-Pro et Grok 4.20.
 
-| Round | Modèles consultés | Sortie |
-|-------|------------------|--------|
-| Round 1 (large) | Gemini 3.1 Pro, GPT-5.5, Kimi K2.6, Qwen 3.5, ChatGPT (DeepSeek implicite via reasoning) | ~70 décisions architecturales soumises ; convergence sur 30% |
-| Round 2 (focus) | Gemini, GPT-5.5, Kimi, DeepSeek, ChatGPT | Convergence ~70%, 12 points résiduels |
-| Round 3 (clôture) | Gemini, GPT-5.5, Kimi, Qwen, ChatGPT, DeepSeek | Convergence ~90% des décisions actées |
-| Round 4 (failles résiduelles, en cours) | **GPT-5.5, DeepSeek V4-Pro, Gemini 3.1 Pro, Kimi K2.6, Grok 4.20, Claude Opus 4.7** | 5 failles résiduelles — voir §5, §13, §15, §20, §22, §23 |
-
-**Diversité 5D de l'équipe round 4** :
+**Diversité 5D de l'équipe** :
 - **Provider** : Anthropic (Opus), OpenAI (GPT-5.5), Google (Gemini), Moonshot (Kimi), DeepSeek (V4-Pro), xAI (Grok)
 - **Architecture** : dense (Opus, GPT, Gemini), MoE (DeepSeek V4-Pro, Kimi K2.6), hybride (Grok)
 - **Alignment** : RLHF Anthropic, RLHF OpenAI, Constitutional AI/Sparrow Google, post-train Moonshot, RL-pure DeepSeek, post-train xAI

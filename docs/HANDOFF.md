@@ -1,10 +1,12 @@
 # POLYBUILD v3 — Handoff document (humain ou IA)
 
-> Document destiné à un humain qui découvre POLYBUILD pour la première fois,
-> ou à une IA qui prend la suite de cette session sans contexte préalable.
-> Style "expert pédagogue" : pas de jargon non expliqué, exemples concrets.
+> Document destiné à un humain qui découvre POLYBUILD pour la première
+> fois, ou à une IA qui prend la suite sans contexte préalable.
+> Style "expert pédagogue" : pas de jargon non expliqué, exemples
+> concrets.
 
-État au commit `d9aeacb` sur `main` (2026-05-03, après 11 rounds d'audit).
+Version courante : **v3.2.6** (stable, gel — voir `git tag` et le
+`CHANGELOG` implicite via `git log` pour la généalogie complète).
 
 ---
 

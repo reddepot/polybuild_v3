@@ -55,7 +55,7 @@ def audit_dir(override: Path | None = None) -> Path:
     The directory is created lazily (mode 0700) so first-time use after
     install does not require manual setup.
 
-    POLYLENS-FIX-8 P1: ``Path.mkdir(mode=0o700)`` only applies the mode
+    ``Path.mkdir(mode=0o700)`` only applies the mode
     to a freshly created directory. If the directory already existed
     (e.g. user ran an older polybuild that created it 0o755), the mode
     bits stayed permissive. We unconditionally chmod the resolved path
@@ -222,7 +222,7 @@ def drain_queue(
 ) -> Iterator[AuditQueueEntry]:
     """Return the current queue contents WITHOUT removing them.
 
-    POLYLENS-FIX-3 P1 — replay safety. The previous version truncated
+    — replay safety. The previous version truncated
     the file before the caller iterated, so a crash mid-processing
     silently lost every unprocessed entry. The new contract:
 
@@ -276,11 +276,11 @@ def mark_entry_processed(
                 continue
             survivors.append(line)
 
-        # POLYLENS run #2 P0: rewrite the queue atomically. The
+        # : rewrite the queue atomically. The
         # previous in-place ``write_text`` truncated the file before
         # writing the survivors; a crash in between lost every entry
         # we had just decided to keep — the same regression
-        # POLYLENS-FIX-3 was meant to prevent.
+        # was meant to prevent.
         payload = "\n".join(survivors) + "\n" if survivors else ""
         atomic_write_text(qpath, payload)
 

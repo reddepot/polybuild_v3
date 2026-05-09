@@ -58,7 +58,7 @@ def _build_consensus_strategy(scorer_name: str) -> PipelineStrategy:
     if scorer_name == "naive":
         return ConsensusPipeline()
     if scorer_name == "devcode":
-        # POLYLENS-FIX-7 P2: ``DevcodeScorer.__init__`` itself imports
+        # ``DevcodeScorer.__init__`` itself imports
         # ``devcode.reputation`` to build the default in-memory store, so
         # an ImportError can also escape at instantiation time. Wrap both
         # the module import AND the constructor call in the same
@@ -77,7 +77,7 @@ def _build_consensus_strategy(scorer_name: str) -> PipelineStrategy:
             ) from e
         return ConsensusPipeline(scorer=scorer)
     if scorer_name == "devcode-shadow":
-        # FEAT-2: shadow scorer always returns NaiveScorer's winner (no
+        # shadow scorer always returns NaiveScorer's winner (no
         # behavior change) and logs DEVCODE divergence to
         # ``~/.polybuild/audit/scorer_shadow.jsonl`` for calibration.
         try:

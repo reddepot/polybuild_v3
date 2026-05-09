@@ -9,7 +9,7 @@ Strategy (acquis convergent rounds 1-4):
 Rollback procedure (manual or via Phase 8 prod_smoke):
     git reset --hard polybuild/run-{run_id}-pre
 
-Round 8 fix [P7-isolation] (ChatGPT P0, 90% confidence):
+(ChatGPT P0, 90% confidence):
     Previous version did `git add -A` in project_root, which embedded ANY
     changes the developer had made in their editor during the 30-45 min
     background run. Catastrophic when running in tmux: the dev keeps
@@ -21,7 +21,7 @@ Round 8 fix [P7-isolation] (ChatGPT P0, 90% confidence):
     rsync-like semantics, and `git add` ONLY those paths. The dev's
     concurrent work in other parts of the repo is preserved.
 
-Round 8 fix [P7-tag-force] (Grok P1):
+(Grok P1):
     `git tag tag_post` was called without `-f` and without checking rc.
     On `--run-id` reuse, the tag already exists → silent failure → tag
     points to old SHA → future rollback targets stale commit.
@@ -46,13 +46,13 @@ from polybuild.models import BuilderResult, CommitInfo, PolybuildRun
 def _copy_cross_device_safe(src: Path, dst: Path) -> None:
     """Copy *src* to *dst*, surviving cross-device link errors.
 
-    Round 10.2 fix [Qwen RX-003 P0]: ``shutil.copy2`` preserves metadata
+    ``shutil.copy2`` preserves metadata
     via ``os.link``-style fast paths and raises ``OSError(EXDEV)`` when
     the source and destination live on different volumes (common on
     Synology NAS bind mounts). We try ``copy2`` first to retain mtime
     where possible, then fall back to a portable byte stream.
 
-    Round 10.4 fix [Kimi P1]: when the fallback path runs we lose
+    when the fallback path runs we lose
     ``copy2`` metadata, including the executable bit on shell scripts.
     Re-apply the source mode (permissions only) so a generated script
     keeps its ``+x`` after the cross-device copy.
@@ -91,7 +91,7 @@ ADR_TRIGGERS = {
 # ────────────────────────────────────────────────────────────────
 
 
-# Round 10.4 fix [Gemini RX-606-01 + chain]: every git call goes through
+# every git call goes through
 # this hardened wrapper so we never expose the orchestrator to:
 #   * malicious hooks planted under ``.git/hooks/`` (``--no-verify`` on commit)
 #   * a poisoned ``.gitconfig`` in the repo or the user's HOME (
@@ -138,7 +138,7 @@ async def _list_changed_files(cwd: Path = Path()) -> list[Path]:
     for line in stdout.splitlines():
         # format: "XY path/to/file"
         if len(line) >= 4:
-            # Round 10.4 fix [Kimi P1]: ignore untracked files (``?? path``)
+            # ignore untracked files (``?? path``)
             # so detect_adr_triggers doesn't fire on a developer's stray
             # ``models.py`` in /tmp.
             if line[:2].strip() == "??":
@@ -190,7 +190,7 @@ Accepted / Proposed / Deprecated
 ## Alternatives considered
 <list>
 """
-    # Round 10.2 fix [Kimi RX-005]: SIGINT propagation (start_new_session)
+    # SIGINT propagation (start_new_session)
     # + explicit proc.kill() on timeout so a hung ``claude code`` doesn't
     # leave an orphan that survives the run.
     proc: asyncio.subprocess.Process | None = None
@@ -257,20 +257,19 @@ async def phase_7_commit(
                        using `git add -A`. None is accepted for backward
                        compatibility but logs a warning.
 
-    Round 8 fix [P7-isolation]: explicit per-file copy + add prevents
+    explicit per-file copy + add prevents
     embedding the developer's concurrent work-in-progress.
     """
     logger.info("phase_7_start", run_id=run.run_id)
 
-    # Round 10.4 fix [Kimi P1]: refuse to operate on a non-git directory.
+    # refuse to operate on a non-git directory.
     rc, _, _ = await _git("rev-parse", "--git-dir", cwd=project_root)
     if rc != 0:
         raise RuntimeError(
             f"phase_7_project_root_not_a_git_repo: {project_root}"
         )
 
-    # Round 10.4 fix [ChatGPT P7-401 P0 — index pré-stagé du dev]:
-    # ``git commit`` includes the entire index, not just the paths Phase 7
+    #     # ``git commit`` includes the entire index, not just the paths Phase 7
     # added. If the developer had pre-staged work-in-progress, our commit
     # would silently bundle it. Refuse to start when the index is dirty
     # so the developer cannot lose their staged WIP under a polybuild tag.
@@ -281,7 +280,7 @@ async def phase_7_commit(
             "developer changes. Stash or unstage them before re-running."
         )
 
-    # Round 10.4 fix [ChatGPT P7-401 + Kimi convergent]: the legacy
+    # the legacy
     # ``git add -A`` fallback for missing winner_result is a foot-gun
     # that re-introduces the round-8 P0 (embedding dev WIP). Refuse.
     if winner_result is None:
@@ -295,7 +294,7 @@ async def phase_7_commit(
     tag_post = f"polybuild/run-{run.run_id}-commit"
 
     # 1. Pre-commit tag (rollback anchor) — points to current HEAD.
-    # Round 10.4 fix [Kimi P0 + ChatGPT P7-405]: previously a failed pre-tag
+    # previously a failed pre-tag
     # was warn-only, but without an anchor Phase 8 cannot roll back. Also
     # check that the existing tag (if any) does not already point at a
     # different SHA — that would indicate a run_id collision and silently
@@ -325,7 +324,7 @@ async def phase_7_commit(
         # winner_result.code_dir is the per-voice worktree under
         # .polybuild/runs/{run_id}/worktrees/{voice_id}/. We mirror it
         # into project_root and add only those paths.
-        # Round 10.3 fix [ChatGPT RX-301-04 P0 — validated artefact ≠
+        # [ChatGPT RX-301-04 P0 — validated artefact ≠
         # committed artefact]: ``winner_result.code_dir`` is set to either
         # ``worktree`` or ``worktree/src`` depending on the adapter. When
         # it points at ``worktree/src`` (e.g. claude_code._parse_output
@@ -338,15 +337,14 @@ async def phase_7_commit(
         if src_root.name in {"src", "lib"}:
             prefix_to_restore = src_root.name
         for src_path in src_root.rglob("*"):
-            # Round 10.3 fix [Kimi RX-304 P0 — symlink data exfiltration]:
-            # ``Path.is_file()`` follows symlinks, so a malicious builder
+            #             # ``Path.is_file()`` follows symlinks, so a malicious builder
             # that drops a symlink ``src/data -> /etc/passwd`` (or
             # ``~/.ssh/id_rsa``) would have its TARGET content copied
             # into project_root and committed. Skip symlinks entirely
             # at the staging gate — they have no legitimate purpose in
             # an LLM-generated worktree.
             #
-            # Round 10.7 fix [Grok E-01 + Kimi C-06, 3/5 conv P0]: reordered
+            # reordered
             # so the ``is_symlink()`` check fires BEFORE ``is_file()``. The
             # previous order was functionally safe (symlinks-to-files passed
             # is_file() then got caught by is_symlink()) but the inverted
@@ -389,9 +387,9 @@ async def phase_7_commit(
         ):
             tests_root = winner_result.tests_dir
             for src_path in tests_root.rglob("*"):
-                # Round 10.3 fix [Kimi RX-304 P0]: same symlink defence
+                # same symlink defence
                 # applies on the tests/ side path.
-                # Round 10.7 fix [Grok E-02, 3/5 conv P0]: same reorder
+                # same reorder
                 # as the code_dir loop above — is_symlink() must fire
                 # before is_file() to make intent unambiguous and to
                 # avoid the resolved-target stat() syscall.
@@ -414,7 +412,7 @@ async def phase_7_commit(
 
         # Stage exactly the paths we copied — no `-A`.
         if staged_paths:
-            # Round 10.4 fix [ChatGPT P7-404 + Qwen P1-02]: a partial
+            # a partial
             # ``git add`` would produce a partial commit silently. Batch
             # in chunks of 50 paths and raise on any non-zero rc — better
             # to fail loud than ship half a fix.
@@ -466,13 +464,13 @@ Polybuild-run: {run.run_id}
 Polybuild-spec-hash: {run.spec_hash[:12]}
 """
 
-    # Round 10.4 fix [Gemini RX-606-02 P1]: a commit message produced by
+    # a commit message produced by
     # an LLM that starts with ``-`` would be parsed as a CLI flag by some
     # git versions. Pad with a space.
     if commit_msg.startswith("-"):
         commit_msg = " " + commit_msg
 
-    # Round 10.4 fix [Gemini RX-606-01 P0]: --no-verify so a malicious
+    # --no-verify so a malicious
     # builder cannot plant a ``.git/hooks/pre-commit`` script that runs
     # arbitrary code as the orchestrator. Git hooks have no place in an
     # automated polybuild run.
@@ -481,7 +479,7 @@ Polybuild-spec-hash: {run.spec_hash[:12]}
     )
     if rc != 0:
         if "nothing to commit" in stderr or "nothing to commit" in stdout:
-            # Round 10.4 fix [ChatGPT P7-407]: ``sha=""`` is not a commit.
+            # ``sha=""`` is not a commit.
             # Refuse to mark a run as committed when no commit happened.
             raise RuntimeError(
                 "phase_7_no_changes: refusing committed status without "
@@ -495,7 +493,7 @@ Polybuild-spec-hash: {run.spec_hash[:12]}
     commit_sha = sha_out.strip()
 
     # 6. Post-commit tag.
-    # Round 8 fix [P7-tag-force] (Grok P1): use `-f` and check rc. Previous
+    # (Grok P1): use `-f` and check rc. Previous
     # version silently failed on --run-id reuse, leaving the tag pointing to
     # the OLD commit → future rollback would target stale code.
     rc, _, stderr = await _git("tag", "-f", tag_post, cwd=project_root)
@@ -514,8 +512,7 @@ Polybuild-spec-hash: {run.spec_hash[:12]}
                 adr_dir.mkdir(parents=True, exist_ok=True)
                 adr_path = adr_dir / f"{adr_id}-polybuild-run-{run.run_id}.md"
                 adr_path.write_text(adr_text)
-                # Round 10.4 fix [ChatGPT P7-406 + Kimi P0 + Qwen P1-03]
-                # (3-conv): each ADR-amend git call must check rc.
+                #                 # (3-conv): each ADR-amend git call must check rc.
                 # A pre-commit hook rejecting the ADR would otherwise leave
                 # ``tag_post`` pointing at the *non*-amended commit, while
                 # ``commit_sha`` (read after the no-op amend) would be the

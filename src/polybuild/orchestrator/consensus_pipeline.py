@@ -126,7 +126,7 @@ class ConsensusPipeline:
         #   * The scorer abstained (``winner_voice_id is None``, the naive
         #     case). Apply the canonical eligibility filter below — same
         #     algorithm as before M2A.
-        # Round 10.1 fix [Kimi P0 #4]: ``grounding_disqualifies`` is
+        # ``grounding_disqualifies`` is
         # applied in BOTH paths; the spec rule "≥2 hallucinated imports
         # = disqualification" lives in ``grounding_disqualifies`` and a
         # winner with hallucinations is unsafe regardless of the scorer.

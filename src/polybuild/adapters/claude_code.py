@@ -195,7 +195,7 @@ class ClaudeCodeAdapter(BuilderProtocol):
     def _build_prompt(self, spec: Spec, cfg: VoiceConfig, worktree: Path) -> str:
         """Build the unified builder prompt with AGENTS.md + memory injection."""
         # TODO: integrate memory.retrieve_relevant_runs() once vector store is wired
-        # Round 7 fix [O3] (Gemini P0 + ChatGPT CONDITIONAL_GO):
+        # (Gemini P0 + ChatGPT CONDITIONAL_GO):
         # When called from Phase 5 triade via run_raw_prompt(), the synthetic
         # Spec.task_description IS the actual prompt (critic/fixer/verifier
         # template). Wrapping it in <AGENTS_MD>/<TASK_PROFILE>/<INSTRUCTIONS>
@@ -258,12 +258,12 @@ Working directory: {worktree}
     def _load_agents_md(self) -> str:
         """Load AGENTS.md sanitized through sanitize_prompt_context.
 
-        Round 10.2.1 fix [ChatGPT RX-001 P0 + Kimi RX-007 P1] — adapters
+        — adapters
         were embedding the raw file content into the LLM prompt, bypassing
         the sanitization the orchestrator applied for the privacy gate.
         We now sanitize at every injection point as defence in depth.
 
-        Round 10.7 fix [POLYLENS v3 GLM A-09 dead docstring]: removed the
+        removed the
         stray inner triple-quoted expression that ruff flags as dead code.
         """
         from polybuild.security.prompt_sanitizer import sanitize_prompt_context
@@ -330,7 +330,7 @@ Working directory: {worktree}
     def _estimate_metrics(self, worktree: Path) -> SelfMetrics:
         """Compute metrics from the worktree if not provided by the model.
 
-        Round 10.7 fix [POLYLENS v3 D-02 P1]: previous implementation read
+        previous implementation read
         each .py file twice (once for loc, once for TODO count). Read each
         file once into a local variable.
         """

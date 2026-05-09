@@ -56,7 +56,7 @@ class MCPGateResult(BaseModel):
 
 
 async def _drain_stderr(proc: asyncio.subprocess.Process) -> None:
-    """Round 5 fix [D] (Audit 5 P0): drain stderr continuously to prevent
+    """(Audit 5 P0): drain stderr continuously to prevent
     pipe buffer fill → MCP server deadlock. 4/5 audits flagged this."""
     if proc.stderr is None:
         return
@@ -178,14 +178,14 @@ async def validate_mcp_server(
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            # Round 5 fix [E]: start_new_session non-portable on Windows.
+            # start_new_session non-portable on Windows.
             # Only enable on POSIX (audits 1+2 flagged this).
             start_new_session=(sys.platform != "win32"),
         )
     except (OSError, FileNotFoundError) as e:
         return MCPGateResult(passed=False, errors=[f"spawn_failed: {e}"])
 
-    # Round 5 fix [D] (Audit 5 P0): drain stderr in a background task to prevent
+    # (Audit 5 P0): drain stderr in a background task to prevent
     # pipe buffer fill → deadlock when the MCP server writes verbose logs.
     drain_task: asyncio.Task[None] = asyncio.create_task(_drain_stderr(proc))
 
@@ -216,7 +216,7 @@ async def validate_mcp_server(
             errors.append("initialize_no_capabilities")
 
         # Send the initialized notification (no response expected)
-        # Round 5 fix [S]: was missing await drain() — race on slow servers.
+        # was missing await drain() — race on slow servers.
         if proc.stdin is not None:
             proc.stdin.write(b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
             await proc.stdin.drain()
@@ -281,7 +281,7 @@ async def validate_mcp_server(
         errors.append(f"unexpected: {type(e).__name__}: {e}")
 
     finally:
-        # Round 5 fix [E] (Audits 1+2): portable cleanup + always wait().
+        # (Audits 1+2): portable cleanup + always wait().
         # Audit 1 P0: previous version caught ProcessLookupError but never awaited
         # proc.wait() → zombies. Audit 2 P2: Windows portability.
         drain_task.cancel()

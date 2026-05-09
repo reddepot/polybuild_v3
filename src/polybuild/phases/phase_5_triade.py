@@ -43,7 +43,7 @@ from polybuild.models import (
 logger = structlog.get_logger()
 
 
-# Round 10.7 fix [Kimi C-04 P1 + Gemini validation MISSING-05]: allow-list
+# allow-list
 # of env vars propagated to local-gate subprocesses (ruff/mypy/pytest).
 # Stripping them caused ``uv``/``pytest``/``mypy`` to fail outright; the
 # allow-list keeps them functional while still isolating the child from
@@ -97,7 +97,7 @@ def pick_triade(
     if risk_profile.excludes_openrouter:
         all_models = [(m, f) for m, f in all_models if not m.startswith(("deepseek/", "x-ai/"))]
     if risk_profile.excludes_us_cn_models:
-        # Round 10.3 fix [ChatGPT RX-301-07 P1]: ``deepseek`` was missing
+        # ``deepseek`` was missing
         # from the exclude set, so a sensitivity-HIGH run could re-admit
         # a CN model in Phase 5 even though Phase 1 had filtered it out.
         # Keep this list aligned with phase_1_select.is_us_or_cn_model().
@@ -114,7 +114,7 @@ def pick_triade(
 
     available = [(m, f) for m, f in all_models if f != winner_family]
 
-    # Round 10.3 fix [Kimi RX-301 P0]: with both excludes_openrouter and
+    # with both excludes_openrouter and
     # excludes_us_cn_models on (medical_high), the pool can collapse to a
     # single family (mistral). If the winner happens to be that family,
     # ``available`` is empty and ``available[0]`` raises IndexError —
@@ -142,8 +142,7 @@ def pick_triade(
         if f not in {critic_family, fixer_family, auditor_family}
     ]
     if not verifier_candidates:
-        # Round 10.3 fix [Grok RX-301-02 + Qwen + Gemini + DeepSeek]
-        # (4/4 conv, P0/P1): the previous fallback re-included
+        #         # (4/4 conv, P0/P1): the previous fallback re-included
         # ``auditor_family`` in the candidate pool, allowing the same
         # family that produced the audit to also verify the fix —
         # the canonical collusion vector. We now split the policy:
@@ -190,7 +189,7 @@ class InsufficientOrthogonalFamiliesError(RuntimeError):
     """Raised when the triade selector cannot find a fully-orthogonal
     Critic/Fixer/Verifier set under a sensitivity policy that forbids
     relaxation. Callers may catch this to escalate to a human reviewer
-    (Round 10.3 fix for collusion vector under medical_high).
+    (for collusion vector under medical_high).
     """
 
     def __init__(
@@ -214,7 +213,7 @@ class InsufficientOrthogonalFamiliesError(RuntimeError):
 def _resolve_prompts_dir() -> Path:
     """Locate prompts/ robustly across source-tree, wheel install, and CI.
 
-    Round 9 fix [Claude-prompts-dir] (Claude P0):
+    (Claude P0):
         Previous `_PROMPTS_DIR = parents[3] / "prompts"` worked only in
         editable install from source-tree. In a wheel install, parents[3]
         points outside the package and prompts/ is not found. The soft
@@ -265,7 +264,7 @@ def _resolve_prompts_dir() -> Path:
 _PROMPTS_DIR = _resolve_prompts_dir()
 
 
-# Round 10.2 fix [Grok adversarial — prompts/*.md poisoning]: each Phase-5
+# each Phase-5
 # template is expected to contain at least the ``{finding_id}`` placeholder.
 # If an attacker tampers with prompts/critic.md to remove all placeholders
 # (so the LLM is unconstrained) the orchestrator should refuse rather than
@@ -285,12 +284,12 @@ _REQUIRED_PROMPT_PLACEHOLDERS: dict[str, set[str]] = {
 def _load_prompt(name: str) -> str:
     """Load a prompt template from prompts/ directory.
 
-    Round 9 fix [Claude-prompts-dir]: removed the soft fallback that used
+    removed the soft fallback that used
     to return a placeholder-less string. ``str.format`` would silently
     swallow all kwargs and feed the LLM a useless prompt. Now we raise
     loudly if a specific template is missing.
 
-    Round 10.2 fix [Grok adversarial]: also validate that the loaded
+    also validate that the loaded
     template contains every placeholder the corresponding caller will
     supply. Sanitize through the prompt-injection sanitizer too so a
     tampered template carrying ``<!-- override system prompt -->`` is
@@ -305,7 +304,7 @@ def _load_prompt(name: str) -> str:
     raw = path.read_text(encoding="utf-8")
 
     # Defence against template tampering: enforce required placeholders.
-    # Round 10.7 fix [Kimi C-07 P1]: previously the check was skipped
+    # previously the check was skipped
     # whenever ``POLYBUILD_PROMPTS_DIR`` was set — but that env var has
     # legitimate non-debug uses (CI custom prompt dir, deployments with
     # bundled prompts at a non-default location). Setting it would
@@ -342,9 +341,9 @@ async def _run_local_gates(code_dir: Path) -> tuple[bool, str]:
     """
     failures: list[str] = []
 
-    # Round 10.7 fix [Kimi C-04 P1]: align local-gates subprocess hygiene
+    # align local-gates subprocess hygiene
     # with the rest of the codebase (start_new_session + minimal env).
-    # Round 10.7 fix [Gemini validation MISSING-05]: allow-list rather
+    # allow-list rather
     # than wholesale-strip — propagate the variables ``uv``, ``pytest``
     # and ``mypy`` need (defined module-level above).
     minimal_env = {
@@ -442,7 +441,7 @@ def _parse_verifier_verdict(raw: str) -> dict[str, Any]:
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
     candidate = fenced.group(1) if fenced else raw
 
-    # Round 10.2 fix [Qwen adversarial — greedy regex bypass] (P0):
+    # (P0):
     # the previous version used ``re.search(r"\{.*\}")`` which is GREEDY.
     # If the LLM emits two JSON blocks (e.g. one injected by an attacker
     # via a docstring + the legitimate verdict), the regex captures the
@@ -499,18 +498,18 @@ async def _invoke_role(
 ) -> str:
     """Invoke a model in a given triade role (critic/fixer/verifier).
 
-    Round 5 fix [O] (Audit 2 P0): was calling `builder.generate(prompt=...,
+    (Audit 2 P0): was calling `builder.generate(prompt=...,
     workdir=..., timeout_s=..., role=...)` which did not match the
     BuilderProtocol signature `generate(spec, cfg)` — would have raised
     TypeError on every adapter. Now uses the new `run_raw_prompt()` method
     which adapters inherit by default.
 
-    Round 6 fix [O2] (Audits 4+6): propagate risk_profile to preserve
+    (Audits 4+6): propagate risk_profile to preserve
     medical_high constraints; mark non-write roles to prevent verifier
     from rewriting code. See builder_protocol.py:run_raw_prompt() for
     the no_write_roles enforcement.
 
-    Round 10.3 fix [Grok RX-301-01 + Qwen RX-301-03 + DeepSeek + Gemini
+    [Grok RX-301-01 + Qwen RX-301-03 + DeepSeek + Gemini
     RX-301-01] (4/4 conv, P1): wrap the adapter call in
     ``asyncio.wait_for`` with ``timeout_s + 30s`` slack. Adapters already
     enforce per-call timeouts but a defunct child process can ignore them.
@@ -577,13 +576,12 @@ async def _triade_p0(
     verifier_template = _load_prompt("verifier_strict")
 
     # ── Step 1: Critic confirms the finding ─────────────────────────────
-    # Round 8 fix [P5-evidence] (Qwen P0, 80% confidence):
+    # (Qwen P0, 80% confidence):
     # Pydantic contract uses `evidence.file` and `evidence.snippet`, but Phase 5
     # was reading `evidence.file_path` and `evidence.excerpt` which don't exist.
     # AttributeError on EVERY P0 finding → blocked_p0 → run abort. Deterministic
     # crash that 5 of 6 round-7 audits missed (Qwen flagged it correctly).
-    # Round 10.3 fix [Kimi RX-301-02 + Qwen RX-301-02 + ChatGPT RX-301-08]
-    # (3-conv P0): finding.description and evidence.snippet originate from
+    #     # (3-conv P0): finding.description and evidence.snippet originate from
     # the auditor LLM in Phase 4. A compromised auditor (or one that
     # passed through a poisoned code/AGENTS.md context) can smuggle
     # ``<!-- ignore previous instructions -->`` directives into either
@@ -592,7 +590,7 @@ async def _triade_p0(
     # Sanitize at the format-time boundary as defence in depth.
     from polybuild.security.prompt_sanitizer import sanitize_prompt_context
 
-    # Round 10.7 fix [Kimi C-01 P0]: ``finding.evidence.file`` is a Path
+    # ``finding.evidence.file`` is a Path
     # produced upstream by the auditor model (LLM-controlled). Without
     # sanitization, an attacker who controls auditor output could embed
     # Markdown/HTML/zero-width sequences in the path component, which then
@@ -643,7 +641,7 @@ async def _triade_p0(
     }
     fixer_feedback = ""
 
-    # Round 10 fix [Phase 5 fixer test enforcement] (2-conv: Claude + Grok
+    # (2-conv: Claude + Grok
      # round 9 P1): a snapshot of the tests/ directory taken before the Fixer
     # runs lets us verify post-hoc that the Fixer actually added a regression
     # test for this finding. If not, the verdict is degraded to "escalate"
@@ -656,7 +654,7 @@ async def _triade_p0(
     if tests_root.exists():
         pre_fixer_test_files = set(tests_root.rglob("test_*.py"))
 
-    # Round 10.5 fix [Grok RX-501-01 + DeepSeek + ChatGPT P5-501] (3/5 conv,
+    # (3/5 conv,
     # P0 absolu) — the previous version (1) discarded the fixer's response
     # entirely (``await _invoke_role(...)`` without assignment, so the
     # critic's previous-verdict feedback never carried fixer state) and
@@ -667,7 +665,7 @@ async def _triade_p0(
     # a tree hash before/after the fixer call and refuse to advance the
     # loop unless we observe a real mutation under ``winner.code_dir.parent``.
     def _tree_hash(root: Path) -> str:
-        # Round 10.7 fix [Kimi C-06 P1, 1/5 conv]: ``Path.is_file()`` follows
+        # ``Path.is_file()`` follows
         # symlinks. A malicious symlink dropped in the worktree (e.g.
         # ``foo.py -> /etc/passwd``) would otherwise be hashed AND read,
         # leaking arbitrary host file content into the run-level tree
@@ -689,7 +687,7 @@ async def _triade_p0(
 
     worktree_root = winner.code_dir.parent
 
-    # Round 10.2 fix [Kimi RX-002 P1]: bound the "no-test" retry. Without
+    # bound the "no-test" retry. Without
     # this counter the ``continue`` below skipped iteration accounting,
     # which meant a fixer that never produces a regression test could
     # spin the loop ``max_iterations`` times — wasting Critic+Fixer+
@@ -698,9 +696,8 @@ async def _triade_p0(
     max_no_test_strikes = 1
 
     for iteration in range(1, max_iterations + 1):
-        # Round 10.3 fix: critic_output is also LLM-controlled; sanitize.
-        # Round 10.7 fix [Codex validation PB-R107-P5-EVIDENCE-REINJECT P0]:
-        # the FIXER prompt also re-injects ``finding.evidence.file`` —
+        # : critic_output is also LLM-controlled; sanitize.
+        #         # the FIXER prompt also re-injects ``finding.evidence.file`` —
         # which is auditor-controlled (LLM output). Same sanitization
         # treatment as the Critic prompt.
         # Round 10.8 prod-launch fix: prompts/fixer.md uses ``{workdir}``
@@ -745,7 +742,7 @@ async def _triade_p0(
                     "overridden for the fixer role."
                 ),
             )
-            # Round 10.7 fix [Kimi C-02 P0]: ``fixer_output`` is raw LLM text
+            # ``fixer_output`` is raw LLM text
             # that gets re-injected into the next loop iteration's prompt.
             # Without sanitization the Fixer can poison its own future
             # context (multi-turn prompt-injection chain). Sanitize before
@@ -765,7 +762,7 @@ async def _triade_p0(
                 break
             continue
 
-        # Round 10 fix [Phase 5 fixer test enforcement]: enforce that the
+        # enforce that the
         # Fixer created at least one new test file or extended an existing one.
         post_fixer_test_files: set[Path] = (
             set(tests_root.rglob("test_*.py"))
@@ -807,7 +804,7 @@ async def _triade_p0(
             continue
 
         # Verifier
-        # Round 10.3 fix: same sanitization on critic_output before
+        # : same sanitization on critic_output before
         # injection into the verifier prompt.
         verifier_prompt = verifier_template.format(
             finding_id=finding.id,
@@ -842,7 +839,7 @@ async def _triade_p0(
                 iterations=iteration,
             )
 
-        # Round 10.7 fix [Kimi C-03 P0]: same multi-turn injection vector
+        # same multi-turn injection vector
         # — the Verifier's ``reason`` and ``required_evidence`` fields are
         # LLM-emitted strings re-injected into the Fixer prompt. Sanitize
         # before passing them downstream.
@@ -911,11 +908,11 @@ async def _triade_p1_batch(
         for f in findings
     )
 
-    # Round 6 fix [P1-no-Critic] (Audit 6 P2): the docstring promised a
+    # (Audit 6 P2): the docstring promised a
     # "Single Critic confirmation pass (group review)" but the code skipped
     # straight to the Fixer. Either the docstring lied or the code missed
     # the call — fixing the code (cheaper than throwing away the contract).
-    # Round 10.3 fix [Kimi RX-301-02 / Qwen]: findings_block contains
+    # findings_block contains
     # auditor-controlled text (descriptions, snippets); sanitize before
     # injection.
     from polybuild.security.prompt_sanitizer import sanitize_prompt_context
@@ -940,7 +937,7 @@ async def _triade_p1_batch(
         logger.warning("p1_batch_critic_failed_proceeding", axis=axis, error=str(e))
         critic_batch_output = "(critic call failed; proceeding with raw findings)"
 
-    # Round 10.3 fix: P1 batch path is fed by both critic_batch_output
+    # : P1 batch path is fed by both critic_batch_output
     # (LLM-controlled) and findings_block (LLM-controlled via auditor).
     # Sanitize the assembled critic_analysis before .format().
     # Round 10.8 prod-launch fix: provide ``{workdir}`` to satisfy the
@@ -1038,7 +1035,7 @@ async def phase_5_dispatch(
     )
 
     p0_all = [f for f in audit.findings if f.severity == Severity.P0]
-    # Round 9 fix [Budget] (Claude + ChatGPT + Grok convergence — P0):
+    # (Claude + ChatGPT + Grok convergence — P0):
     #   A zealous auditor (DeepSeek V4-Pro known for exhaustive findings)
     #   could produce 10+ P0. Each P0 = 3-6 LLM calls (Critic + Fixer×2 +
     #   Verifier×2). With 10 P0, that's 50+ LLM calls just in Phase 5 →
@@ -1046,7 +1043,7 @@ async def phase_5_dispatch(
     #   P1 batch processing (single Critic + Fixer per axis, no Verifier).
     max_p0_triade = 5
     if len(p0_all) > max_p0_triade:
-        # Round 10.3 fix [ChatGPT RX-301-06 P0 — adversarial P0 budget
+        # [ChatGPT RX-301-06 P0 — adversarial P0 budget
         # exhaustion]: previously P0 findings beyond ``max_p0_triade``
         # were silently downgraded to P1 batch (no per-finding Critic/
         # Verifier loop). An attacker could plant 5 noisy P0 findings

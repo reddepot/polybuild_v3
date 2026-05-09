@@ -64,7 +64,7 @@ def validate_rag_smoke(
     errors: list[str] = []
     chunk_stable = True
 
-    # Round 5 fix [G] (Audits 3+5): refuse `passed=True` when nothing was tested.
+    # (Audits 3+5): refuse `passed=True` when nothing was tested.
     # The previous version returned passed=True if both checks were absent —
     # a profil rag_ingestion_eval could thus validate without chunking, retrieval,
     # or any actual RAG verification. Now: at least one check must be configured.

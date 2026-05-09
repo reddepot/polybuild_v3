@@ -102,7 +102,7 @@ class OpenRouterAdapter(BuilderProtocol):
                 )
                 response.raise_for_status()
                 data = response.json()
-                # Round 10.7 fix [GLM A-05 + Qwen D-02, 2/5 conv P0]: OpenRouter
+                # OpenRouter
                 # can return 200 with a body that omits ``choices`` (rate-limit
                 # response, content-filter refusal, tool-call response with
                 # ``content=None``). The previous direct subscript chain raised
@@ -165,8 +165,7 @@ class OpenRouterAdapter(BuilderProtocol):
                 )
                 response.raise_for_status()
                 data = response.json()
-                # Round 10.7 fix [Codex validation PB-R107-OR-SMOKE-MALFORMED P1]:
-                # apply the same malformed-response guard used in generate().
+                #                 # apply the same malformed-response guard used in generate().
                 # Previously we caught KeyError but not IndexError or TypeError,
                 # and ``content=None`` reached ``json.loads(None)`` which raises.
                 try:
@@ -212,7 +211,7 @@ class OpenRouterAdapter(BuilderProtocol):
         return worktree
 
     def _build_prompt(self, spec: Spec, cfg: VoiceConfig, worktree: Path) -> str:
-        # Round 7 fix [O3] (Gemini P0 + ChatGPT CONDITIONAL_GO):
+        # (Gemini P0 + ChatGPT CONDITIONAL_GO):
         # When called from Phase 5 triade via run_raw_prompt(), the synthetic
         # Spec.task_description IS the actual prompt (critic/fixer/verifier
         # template). Wrapping it in <AGENTS_MD>/<TASK_PROFILE>/<INSTRUCTIONS>
@@ -257,7 +256,7 @@ Output ONLY valid JSON matching the schema. No prose.
     def _load_agents_md(self) -> str:
         """Load AGENTS.md sanitized through sanitize_prompt_context.
 
-        Round 10.2.1 fix [ChatGPT RX-001 P0 + Kimi RX-007 P1] — adapters
+        — adapters
         were embedding the raw file content into the LLM prompt, bypassing
         the sanitization the orchestrator applied for the privacy gate.
         We now sanitize at every injection point as defence in depth.
@@ -280,7 +279,7 @@ Output ONLY valid JSON matching the schema. No prose.
         except json.JSONDecodeError as e:
             return self._failed_result(cfg, worktree, duration, f"Invalid JSON: {e}")
 
-        # Round 10.7 fix [Codex validation PB-R107-OR-PARSE-SHAPE P1]: a valid
+        # a valid
         # JSON document might be a list, string, or null; without an
         # ``isinstance(data, dict)`` guard, ``data.get("files", {})`` raises
         # AttributeError. Same defence already applied at Phase 4 audit.
@@ -300,13 +299,13 @@ Output ONLY valid JSON matching the schema. No prose.
             metrics_data = {}
 
         # Write files to worktree
-        # Round 10.7 fix [GLM A-01 P0]: ``rel_path`` is LLM-controlled and
+        # ``rel_path`` is LLM-controlled and
         # ``Path(worktree) / rel_path`` resolves an absolute right-hand-side
         # to its absolute value (``worktree / "/etc/cron.d/x"`` →
         # ``/etc/cron.d/x``); ``..`` segments also escape the worktree.
         # Combined with prompt-injection vectors elsewhere this would let a
         # compromised builder write arbitrary host files.
-        # Round 10.7 fix [GLM A-08 P1]: ``write_text`` raises ``TypeError``
+        # ``write_text`` raises ``TypeError``
         # if ``source`` is not a string (LLM may emit numbers / nested
         # objects under the file value). Skip+log non-string entries
         # rather than crashing the whole adapter response.

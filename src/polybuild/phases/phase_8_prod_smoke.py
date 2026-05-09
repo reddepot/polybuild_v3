@@ -91,7 +91,7 @@ def _git(args: list[str], cwd: Path | str = ".") -> tuple[int, str]:
     `_git_async()` or wrap this call in `asyncio.to_thread()`. The sync
     version is preserved for tests and CLI tools that don't have a loop.
 
-    Round 10 fix [S603/S607]: resolve git binary at import time via
+    resolve git binary at import time via
     shutil.which() to avoid PATH hijack vector. shell=False (default).
     """
     proc = subprocess.run(  # noqa: S603 — args list, no shell, binary resolved
@@ -107,7 +107,7 @@ def _git(args: list[str], cwd: Path | str = ".") -> tuple[int, str]:
 async def _git_async(args: list[str], cwd: Path | str = ".") -> tuple[int, str]:
     """Async-friendly git wrapper — runs the sync git call in a worker thread.
 
-    Round 6 fix [I/O sync] (Audit 6 Kimi P1): subprocess.run() blocks the
+    (Audit 6 Kimi P1): subprocess.run() blocks the
     asyncio event loop. On a 45-min smoke run with periodic git ops
     (rollback / tag / status), this can stall sample loops. asyncio.to_thread
     delegates the blocking call without releasing the GIL on git itself
@@ -331,7 +331,7 @@ async def phase_8_production_smoke(
     end_time = time.time() + monitoring_window_s
 
     while time.time() < end_time:
-        # Round 10.2 fix [Kimi RX-004]: return_exceptions=True so a single
+        # return_exceptions=True so a single
         # query raising a non-HTTP exception (ValueError/TypeError on a
         # malformed param) does not blow up the whole gather and lose all
         # other results.
@@ -371,9 +371,9 @@ async def phase_8_production_smoke(
     n_passed = sum(1 for r in all_results if r.passed)
     error_rate = (n_total - n_passed) / n_total if n_total else 1.0
     latencies = sorted(r.latency_ms for r in all_results if r.passed)
-    # Round 5 fix [R]: proper p95 — `int(0.95 * 20) = 19` was the max, not p95.
+    # proper p95 — `int(0.95 * 20) = 19` was the max, not p95.
     # Use ceil(0.95 * n) - 1 (standard "nearest rank" method).
-    # Round 6 fix [math-import] (Audit 5 Grok P1): math now imported at top-level.
+    # (Audit 5 Grok P1): math now imported at top-level.
     p95_idx = max(0, math.ceil(0.95 * len(latencies)) - 1) if latencies else 0
     latency_p95 = latencies[p95_idx] if latencies else 0.0
 
@@ -387,7 +387,7 @@ async def phase_8_production_smoke(
         notes.append(f"failed_queries: {failed_queries[:5]}")
 
     threshold_hit_latency = False
-    # Round 5 fix: skip latency check if baseline too small (network jitter swamp)
+    # : skip latency check if baseline too small (network jitter swamp)
     if baseline_latency_p95_ms is not None and baseline_latency_p95_ms > 10.0:
         increase = (latency_p95 - baseline_latency_p95_ms) / baseline_latency_p95_ms
         if increase > latency_increase_threshold:
@@ -402,7 +402,7 @@ async def phase_8_production_smoke(
     rollback_triggered = False
 
     if not passed and rollback_tag:
-        # Round 6 fix [I/O sync] (Audit 6 Kimi P1): rollback_to_tag runs git
+        # (Audit 6 Kimi P1): rollback_to_tag runs git
         # subprocess synchronously. Delegating to a worker thread keeps the
         # event loop responsive (important on long-running smoke runs).
         rollback_triggered = await asyncio.to_thread(
@@ -538,7 +538,7 @@ async def phase_9_cleanup_async(
 ) -> dict[str, Any]:
     """Async wrapper around phase_9_cleanup.
 
-    Round 6 fix [I/O sync] (Audit 6 Kimi P1): when called from an async
+    (Audit 6 Kimi P1): when called from an async
     context (the orchestrator's outer finally), the sync version blocks the
     event loop on `subprocess.run("docker rm")` and `shutil.rmtree()`.
     Delegating to a worker thread keeps the loop responsive — important if
@@ -565,7 +565,7 @@ __all__ = [
 
 
 # ────────────────────────────────────────────────────────────────
-# CLI ENTRYPOINT (Round 5 fix [A] — unanimous: deploy_staging.sh
+# CLI ENTRYPOINT (— unanimous: deploy_staging.sh
 # was calling `python -m polybuild.phases.phase_8_prod_smoke`
 # but the module had no __main__).
 # ────────────────────────────────────────────────────────────────

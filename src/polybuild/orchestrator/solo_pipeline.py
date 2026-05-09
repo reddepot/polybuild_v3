@@ -142,7 +142,7 @@ class SoloPipeline:
         # Stub a VoiceScore so downstream code that iterates ``scores``
         # (PolybuildRun aggregation) keeps working.
         #
-        # POLYLENS run #4 P1 (Grok 4.3): the previous stub used
+        # the previous stub used
         # ``score=1.0`` + all-green gates which made a solo run look
         # like a perfect 1.0-score run in dashboards and metric
         # exports. Now ``score=0.0`` + ``is_solo_stub=True`` so any
@@ -173,7 +173,7 @@ class SoloPipeline:
             project_root,
         )
 
-        # ── Phase 3b: grounding (KEPT — POLYLENS-FIX-5 P1). ──
+        # ── Phase 3b: grounding (KEPT — ). ──
         # Earlier versions skipped grounding in solo mode; gpt-5.5
         # POLYLENS audit flagged this as P1 because hallucinated imports
         # would slip past Phase 4 audit too (Phase 4 doesn't re-run

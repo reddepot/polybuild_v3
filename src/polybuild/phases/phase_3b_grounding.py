@@ -30,7 +30,7 @@ from polybuild.models import (
     Status,
 )
 
-# Round 10 fix [Phase 3b ast.parse timeout] (3-conv: Claude + ChatGPT + Grok
+# (3-conv: Claude + ChatGPT + Grok
 # round 9 P1): a malformed/giant Python file can stall ast.parse for tens of
 # seconds, freezing the asyncio event loop. We cap each parse at 8s by
 # off-loading to a worker thread.
@@ -67,7 +67,7 @@ class GroundingEngine:
         with pyproject.open("rb") as f:
             data = tomllib.load(f)
 
-        # Round 10.7 fix [Qwen D-03 P1]: the chained ``split`` chain misparses
+        # the chained ``split`` chain misparses
         # PEP 508 specifiers that include environment markers
         # (``foo; python_version>="3.11"``), URL specifiers
         # (``foo @ https://...``), or the ``~=`` operator. Use the
@@ -105,7 +105,7 @@ class GroundingEngine:
     def _index_local_modules(self) -> set[str]:
         """All importable module/package names in the project.
 
-        Round 10.1 fix [Kimi P0 #3]: the previous implementation only indexed
+        the previous implementation only indexed
         the file *stems* (``models``, ``orchestrator``…). That caused legit
         qualified imports like ``from polybuild.models import Spec`` to be
         flagged as hallucinations because the top-level package name
@@ -157,7 +157,7 @@ class GroundingEngine:
     ) -> list[GroundingFinding]:
         """Async wrapper of ``check_file`` that bounds ast.parse latency.
 
-        Round 10 fix [Phase 3b ast.parse timeout]: the synchronous variant is
+        the synchronous variant is
         kept for tests, but the orchestrator must use this async path so the
         event loop stays responsive on adversarial inputs.
         """
@@ -248,7 +248,7 @@ class GroundingEngine:
     ) -> list[GroundingFinding]:
         """Async path: each file parse bounded by _AST_PARSE_TIMEOUT_S.
 
-        Round 10.1 fix [Kimi P1 #10]: previously this loop was sequential.
+        previously this loop was sequential.
         With 50 files x 8s timeout = 400s worst case. We now parallelise
         through ``asyncio.gather`` capped by a small Semaphore (8) so that
         a malicious payload trying to exhaust the thread pool can't starve

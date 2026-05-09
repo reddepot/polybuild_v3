@@ -1,6 +1,6 @@
 """Validate FTS5 full-text index via golden queries (round 4).
 
-Convergence (Kimi + DeepSeek): 3 golden queries with expected minimum hits.
+Convergence: 3 golden queries with expected minimum hits.
 The golden set is loaded from a JSON fixture path; tolerates non-existence
 in early dev (returns warn-level result) but BLOCKS in mcp_schema_change /
 rag_ingestion_eval profiles where the fixture is mandatory.
@@ -27,7 +27,7 @@ class FTS5GateResult(BaseModel):
     n_passed: int = 0
     failures: list[str] = []
     errors: list[str] = []
-    # Round 6 fix [fts5-skipped] (Audit 1 P1): explicit boolean for "tests
+    # (Audit 1 P1): explicit boolean for "tests
     # were not actually run". Phase 6 must check this to avoid mistaking a
     # dev-mode skip for a real validation pass.
     skipped: bool = False
@@ -68,7 +68,7 @@ def validate_fts5_golden(
                 fts_table=fts_table,
                 errors=[f"golden_file_not_found: {golden_path}"],
             )
-        # Round 5 fix [H] (Audits 3+5): even in optional mode, signal the skip
+        # (Audits 3+5): even in optional mode, signal the skip
         # so phase_6 can surface it in notes (was hidden as passed=True silently).
         # Round 6 [fts5-skipped]: also set skipped=True so phase_6 can
         # distinguish "real pass" from "dev-mode skip".
@@ -94,7 +94,7 @@ def validate_fts5_golden(
             passed=False, fts_table=fts_table, errors=[f"golden_parse_error: {e}"]
         )
 
-    # Round 5 fix [H] (Audit 3 P2): empty golden = no actual test = fail.
+    # (Audit 3 P2): empty golden = no actual test = fail.
     # Spec round 4 said "3 golden queries". Reject below that threshold.
     if len(golden) < 3 and require_golden_file:
         return FTS5GateResult(

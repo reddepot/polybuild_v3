@@ -1,6 +1,5 @@
 """Safe file write helper for adapter ``_parse_response`` paths.
 
-Round 10.8 fix [ChatGPT A-01 + Kimi A-01/A-02, 2/5 cross-voice P0 audit]:
 the ``OllamaLocalAdapter._parse_response`` and ``MistralEUAdapter._parse_response``
 methods share the same path-traversal vulnerability that was patched in
 ``OpenRouterAdapter._parse_response`` during Round 10.7 — but the fix was
@@ -88,14 +87,14 @@ def write_files_to_worktree(
             )
             continue
         abs_path.parent.mkdir(parents=True, exist_ok=True)
-        # POLYLENS run #3 P1 (KIMI Agent Swarm): the previous in-place
+        # the previous in-place
         # ``write_text`` truncated the destination before writing. A
         # SIGKILL or OOM mid-write left a half-empty file with no
         # backup, which then went straight to the worktree's git
         # commit. Atomic write via ``mkstemp + fsync + replace``
         # guarantees either the old content (if interrupted) or the
         # new content (if completed) — never a half-flushed mix.
-        # POLYLENS run #4 P3 (Perplexity): pass ``parent_mode=0o755``
+        # pass ``parent_mode=0o755``
         # so the worktree subdirectory is readable by the user's
         # reviewer / CI runner. The audit-subsystem default of 0o700
         # would surprise downstream pipelines that expect normal

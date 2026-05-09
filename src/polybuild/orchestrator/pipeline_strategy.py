@@ -65,14 +65,14 @@ class StrategyOutcome:
     orchestrator never inspects the strategy beyond what this dataclass
     exposes.
 
-    POLYLENS-FIX-9 P2: a ``__post_init__`` validator enforces the
+    a ``__post_init__`` validator enforces the
     contract — when ``aborted=False``, ``winner_result`` and
     ``winner_score`` MUST be present (the orchestrator already checks
     this defensively but having the invariant on the dataclass itself
     catches programmer errors at construction time, with a clearer
     traceback than a downstream attribute access).
 
-    POLYLENS run #3 P1 (Grok 4.3): the previous validator allowed any
+    the previous validator allowed any
     combination on the abort path, so a strategy could legitimately
     construct ``aborted=True`` *with* ``winner_result`` populated (e.g.
     ``phase_5_blocked_p0`` returned the would-be winner alongside the
@@ -97,7 +97,7 @@ class StrategyOutcome:
 
     def __post_init__(self) -> None:
         if self.aborted:
-            # POLYLENS run #3 P1 (Grok 4.3): an aborted outcome that
+            # an aborted outcome that
             # also carries winner artefacts is a contradiction — the
             # ``phase_5_blocked_p0`` path used to emit
             # ``aborted=True, winner_result=<the blocked candidate>,

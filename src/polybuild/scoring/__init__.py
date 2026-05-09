@@ -7,7 +7,7 @@ Public API:
     ``polybuild.orchestrator.consensus_pipeline``).
   * ``NaiveScorer`` — default, current Phase 3 gate-based scoring.
 
-POLYLENS run #4 P3 (DeepSeek): the ``_load_devcode_scorer`` lazy
+the ``_load_devcode_scorer`` lazy
 loader was removed. It had no callers in src/ or tests/ — the CLI
 imports ``DevcodeScorer`` directly via
 ``polybuild.scoring.devcode_scorer`` and the optional-dependency

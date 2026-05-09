@@ -65,7 +65,7 @@ _THROTTLE_PATTERN = re.compile(
 
 
 # ────────────────────────────────────────────────────────────────
-# YAML CONFIG SCHEMA (Round 10.1 fix [R5/R10])
+# YAML CONFIG SCHEMA ()
 # ────────────────────────────────────────────────────────────────
 
 
@@ -75,7 +75,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator  # noqa:
 class ConcurrencyLimitsConfig(BaseModel):
     """Validated schema for ``config/concurrency_limits.yaml``.
 
-    Round 10.1 fix [R5 + R10] (5/6 conv: Grok / Qwen / Gemini / DeepSeek /
+    (5/6 conv: Grok / Qwen / Gemini / DeepSeek /
     Kimi): the previous implementation used ``yaml.safe_load`` directly and
     silently fell back to defaults on any malformed value (e.g.
     ``claude: "deux"``). Now we validate the YAML against a Pydantic model
@@ -159,7 +159,7 @@ class CLILimiter:
 
     limits: dict[str, int] = field(default_factory=lambda: dict(_DEFAULT_LIMITS))
     _semaphores: dict[str, asyncio.Semaphore] = field(default_factory=dict, init=False)
-    # Round 5 fix [Q]: keep an explicit in-flight counter to support a real
+    # keep an explicit in-flight counter to support a real
     # "any contention" semantics for P3 (sem.locked() only fires when fully
     # saturated, missing the partial-contention case).
     _inflight: dict[str, int] = field(default_factory=dict, init=False)
@@ -182,7 +182,7 @@ class CLILimiter:
     ) -> CLILimiter:
         """Build from `config/concurrency_limits.yaml`. Falls back to defaults.
 
-        Round 5 fix [Y] (Audit 5 P2): `parents[3]` breaks when installed as a
+        (Audit 5 P2): `parents[3]` breaks when installed as a
         wheel. Now tries env var → explicit path → walking up from cwd → fallback.
         """
         limits = dict(_DEFAULT_LIMITS)
@@ -208,7 +208,7 @@ class CLILimiter:
         if resolved is not None:
             try:
                 raw = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
-                # Round 10.1 fix [R5/R10]: Pydantic-validated load. A typo
+                # Pydantic-validated load. A typo
                 # like ``claude: "deux"`` now raises ValidationError instead
                 # of silently falling back to defaults.
                 cfg = ConcurrencyLimitsConfig.model_validate(raw)
@@ -296,7 +296,7 @@ class CLILimiter:
             Priority.P3: 0.0,
         }[priority]
 
-        # Round 5 fix [Q] (Audit 5 P0): the docstring promised
+        # (Audit 5 P0): the docstring promised
         # "P3 → drop immediately if any contention", but `sem.locked()` only
         # returns True when fully saturated (value=0). With claude=2, one busy
         # slot = `sem.locked()=False` → P3 was passing instead of dropping.
@@ -339,11 +339,11 @@ class CLILimiter:
         wait = time.time() - t0
         stats.total_wait_s += wait
         stats.invocations += 1
-        # Round 5 fix [Q]: track in-flight count for P3 contention detection.
+        # track in-flight count for P3 contention detection.
         self._inflight[provider] = self._inflight.get(provider, 0) + 1
 
         try:
-            # Round 10 fix [CLI hung semaphore leak] (Claude + Grok round 9 P1):
+            # (Claude + Grok round 9 P1):
             # Without a hard execution timeout, a stuck CLI subprocess (claude
             # code, codex, gemini) holds the semaphore forever — subsequent
             # P0/P1 requests time out on acquisition rather than on the actual

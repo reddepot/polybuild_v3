@@ -1,6 +1,8 @@
 # POLYBUILD v3 — Production Runbook
 
-État au commit `2b3c12f` après Round 10.8 prod-launch sprint (codex/claude file extraction + Phase 3 fix + voix chinoises + skill /polybuild + 6 bugs runtime fixés via smoke #4→#9).
+Version courante : **v3.2.6** (stable, gel). Pipeline 13 phases,
+build/audit/triade/commit/smoke. Ce runbook décrit le lancement
+progressif en 3 phases (smoke → low-risk → full).
 
 ## Décision : lancement progressif en 3 phases
 

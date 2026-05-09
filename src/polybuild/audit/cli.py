@@ -123,7 +123,7 @@ async def _drain_async(*, persist: bool) -> None:
             counts = notify_findings(findings, persist=persist)
             for sev, count in counts.items():
                 counts_total[sev] = counts_total.get(sev, 0) + count
-        # POLYLENS-FIX-3 P1: only mark this entry processed AFTER the
+        # only mark this entry processed AFTER the
         # full audit + notification pipeline completed without raising.
         # If we crashed above, the entry stays in the queue and the
         # next ``polybuild audit drain`` will replay it.
@@ -197,7 +197,7 @@ def cmd_cache(
         typer.Argument(help="stats | clear"),
     ] = "stats",
 ) -> None:
-    """Inspect or clear the persistent LLM response cache (FEAT-3).
+    """Inspect or clear the persistent LLM response cache .
 
     ``stats``  → row count, distinct voices, size on disk.
     ``clear``  → wipe every entry (vacuum).

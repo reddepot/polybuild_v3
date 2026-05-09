@@ -1,4 +1,4 @@
-"""Audit cost tracking — record $ + tokens per remote voice call (FEAT-1).
+"""Audit cost tracking — record $ + tokens per remote voice call .
 
 The audit subsystem fans out to two voices per commit. Western voices
 (codex / gemini / kimi CLI) ride on the user's existing subscription
@@ -44,7 +44,7 @@ _OPENROUTER_PRICING: dict[str, tuple[float, float]] = {
     "minimax/m2.7":                 (0.10,  0.30),
     "xiaomi/mimo-v2.5-pro":         (0.05,  0.20),
     "anthropic/claude-opus-4-7":    (15.00, 75.00),  # rarely used by audit
-    # POLYLENS run #4 P2 (Perplexity): the table was de-synced from
+    # the table was de-synced from
     # ``config/routing.yaml`` — the following slugs are referenced as
     # active phase-2 voices but had no pricing entry, silently booking
     # $0 (post-run #3 fix changed that to ``None`` + warning, but the
@@ -58,7 +58,7 @@ _OPENROUTER_PRICING: dict[str, tuple[float, float]] = {
     "qwen/qwen3.6-coder":           (0.40,  1.20),
 }
 
-# POLYLENS run #3 P2 (Gemini + Qwen + DeepSeek convergent): the
+# the
 # ``_UNKNOWN_PRICING = (0.0, 0.0)`` fallback was removed because
 # silently booking $0 for unpriced voices distorted budget review.
 # ``estimate_usd`` now returns ``None`` for unknown slugs and the
@@ -76,8 +76,7 @@ VoicePool = Literal["western", "chinese", "unknown"]
 class VoiceCostEntry(BaseModel):
     """One audit-time voice call cost record.
 
-    POLYLENS run #3 P2 (Gemini + Qwen + DeepSeek convergent):
-    ``estimated_usd`` is now ``float | None``. ``None`` flags an
+        ``estimated_usd`` is now ``float | None``. ``None`` flags an
     unpriced voice (slug missing from ``_OPENROUTER_PRICING``); the
     summary table renders ``-`` for those rows so the operator sees
     explicit "we don't know" rather than a misleading ``$0.00`` that
@@ -110,12 +109,12 @@ def estimate_usd(
     is not in ``_OPENROUTER_PRICING`` (the cost is unknown — silently
     booking it as $0 distorts monthly budget review). Never raises.
 
-    POLYLENS run #2 P2 (gemini): OpenRouter occasionally returns token
+    OpenRouter occasionally returns token
     counts as strings; the multiplication would otherwise raise
     ``TypeError`` and crash the cost-log writer. Coerce defensively to
     ``int`` and fall back to 0.0 on any conversion failure.
 
-    POLYLENS run #3 P2 (Gemini + Qwen + DeepSeek convergent): the
+    the
     previous fallback ``(0.0, 0.0)`` masked unpriced voices. Now we
     distinguish "no tokens consumed" (``0.0``) from "no pricing
     available" (``None``).
@@ -184,7 +183,7 @@ def read_cost_log(
 ) -> list[VoiceCostEntry]:
     """Return cost entries newer than ``since`` (newest first).
 
-    POLYLENS run #2 P2 (Kimi finding #8): unparseable lines are no
+    unparseable lines are no
     longer skipped silently — a warning surfaces the first 80 chars of
     the bad line and the parse error so a future schema-version drift
     is visible to the operator instead of degrading dashboards
@@ -239,7 +238,7 @@ def summarize_costs(
     Includes call count, success rate, total tokens (in+out) and
     cumulative USD. Empty windows return ``"no audit calls in window"``.
 
-    POLYLENS run #3 P2: when an entry has ``estimated_usd=None`` (slug
+    when an entry has ``estimated_usd=None`` (slug
     missing from the pricing table) the row's USD column renders as
     ``-`` and the voice flag ``has_unpriced_calls`` surfaces in a
     warning footer. This avoids the previous behaviour where unpriced

@@ -31,7 +31,7 @@ logger = structlog.get_logger()
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _XML_PI = re.compile(r"<\?.*?\?>", re.DOTALL)
 _HTML_SCRIPT = re.compile(r"<script[^>]*>.*?</script>", re.DOTALL | re.IGNORECASE)
-# Round 10.2 add: Markdown link with hidden title attribute
+# : Markdown link with hidden title attribute
 # (``[visible](http://x 'malicious instructions')``). Strip the title
 # attribute, keep the visible text and bare URL so legitimate cross-refs
 # survive.
@@ -41,7 +41,7 @@ _MD_LINK_TITLE = re.compile(
 _MD_LINK_TITLE_DQ = re.compile(
     r'(\[[^\]]*\]\([^)\s]*?)\s+"[^"]*"(\))',
 )
-# Round 10.2 add: fenced code block with hidden language directive
+# : fenced code block with hidden language directive
 # (e.g. ```bash\n#!ignore previous\n…```). We drop the *content* of fenced
 # blocks: legitimate code samples don't belong in an AGENTS.md instruction
 # context anyway, and their content is the most flexible attack surface.
@@ -82,7 +82,7 @@ def sanitize_prompt_context(raw: str) -> str:
     The cleaning order matters: NFKC first so that homoglyph variants of
     e.g. ``<!--`` collapse to ASCII before the comment regex runs.
 
-    POLYLENS run #3 P3 (KIMI Agent Swarm): the previous implementation
+    the previous implementation
     ran the suspicious-directive check *after* HTML comment stripping.
     A directive hidden inside ``<!-- ignore previous instructions -->``
     was therefore silently removed without raising any warning, blinding
@@ -94,12 +94,12 @@ def sanitize_prompt_context(raw: str) -> str:
     """
     if not raw:
         return ""
-    # POLYLENS run #3 P3: pre-sanitize directive scan. Catches HTML/MD
+    # : pre-sanitize directive scan. Catches HTML/MD
     # comment-hidden injection attempts before the strip pass erases
     # them. We do an NFKC-normalised lower compare so homoglyph
     # variants of "ignore" don't slip past.
     #
-    # POLYLENS run #4 P2 (DeepSeek): a "directive" can also be a
+    # a "directive" can also be a
     # benign citation in legitimate documentation
     # ("the linter must NOT ignore previous output of …"). Logging at
     # ``warning`` level created false-positive noise that drowned the
@@ -123,7 +123,7 @@ def sanitize_prompt_context(raw: str) -> str:
             )
 
     cleaned = unicodedata.normalize("NFKC", raw)
-    # Round 10.2.1 fix [POLYLENS honeypot 1]: nested comments like
+    # nested comments like
     # ``<!-- outer <!-- inner --> still here -->`` survived a single
     # non-greedy pass because the regex matched the inner pair only,
     # leaving ``still here -->``. We iterate the comment / fenced /

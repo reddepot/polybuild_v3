@@ -16,7 +16,7 @@ Attestation values (ChatGPT propose énumération > booléen):
     - "health_adjacent"            : sujet médical sans patient identifiable (paranoia high)
     - "identifiable"               : données réelles → BLOCK toujours
 
-Eds-pseudo lazy-load (Qwen): ~350MB RAM au premier chargement, libéré après run.
+Eds-pseudo lazy-load: ~350MB RAM au premier chargement, libéré après run.
 Kimi écartait eds-pseudo (instable hors clinique narratif). Compromis : eds-pseudo
 optionnel via EDS_PSEUDO_ENABLED=1, fallback dictionnaire métier statique sinon
 (NAS-safe). Avis majoritaire 5/6 conservé (eds-pseudo F1=0.97 documenté).
@@ -119,7 +119,7 @@ def _layer_1_presidio(text: str) -> list[PIIFinding]:
         logger.debug("presidio_unavailable_skipping_l1_nlp")
         return []
 
-    # Round 10.7 fix [Kimi C-09 P1]: ``AnalyzerEngine()`` lazily downloads /
+    # ``AnalyzerEngine()`` lazily downloads /
     # loads spaCy models the first time it runs ``.analyze()``. Re-creating
     # it on every call multiplied the cold-start cost across runs and
     # leaked memory under high concurrency. Cache at module level — the
@@ -173,13 +173,13 @@ _QUASI_LABELS_EDS: set[str] = {
     "PATIENT",
 }
 
-# Round 5 fix [C]: singleton with thread-safe init to avoid re-loading eds-pseudo
+# singleton with thread-safe init to avoid re-loading eds-pseudo
 # (~350MB) on every call. Audits 1+4 flagged this as P0/P1: "libéré après run"
 # was a docstring promise never honored, causing OOM risk on the 18GB NAS.
 _EDS_NLP_INSTANCE: Any | None = None
 _EDS_NLP_LOAD_FAILED: bool = False
 
-# Round 10.7 fix [Kimi C-09 P1]: cached Presidio engine — see _layer_1_presidio.
+# cached Presidio engine — see _layer_1_presidio.
 _PRESIDIO_ENGINE: Any | None = None
 
 
@@ -316,13 +316,13 @@ _STRONG_ATTESTATIONS: set[str] = {
 
 
 def _normalize_attestation(value: str | None) -> AttestationValue:
-    """Round 5 fix [B]: normalize any input to a valid AttestationValue.
+    """normalize any input to a valid AttestationValue.
 
     Audits 1+3+5 flagged this: passing `attestation=<str>` to PrivacyVerdict
     relied on `# type: ignore` and crashed Pydantic if the YAML was malformed
     or if `declared_sensitivity` came from CLI/project_ctx unsanitised.
     """
-    # Round 10.1 fix [R2]: normalize before lowercasing so fullwidth
+    # normalize before lowercasing so fullwidth
     # variants of attestation tokens (e.g. ``ＳＹＮＴＨＥＴＩＣ``) are
     # accepted instead of being silently demoted to ``missing``.
     normalized = unicodedata.normalize("NFKC", str(value or "missing"))
@@ -370,7 +370,7 @@ def phase_minus_one_privacy_gate(
         text: Full text of the brief or generated spec to inspect.
         spec_path: Path to spec.yaml (for attestation lookup).
         declared_sensitivity: Optional override (CLI flag) of the YAML attestation.
-        additional_context: Round 8 fix [Privacy-AGENTS] (4/6 audits convergence
+        additional_context: (4/6 audits convergence
             — Grok, Qwen, ChatGPT, Kimi P0). The brief alone is NOT the full
             attack surface. Adapters inject AGENTS.md, project_ctx, and prior
             checkpoint content into the LLM prompt AFTER this gate runs.
@@ -386,15 +386,15 @@ def phase_minus_one_privacy_gate(
             - else: BLOCK.
         4. L2 hit (1 quasi-id) + attestation = "missing" → BLOCK.
         5. attestation = "missing" + text >1500 chars → BLOCK.
-            (Round 5 fix [U]: was 300 chars, too strict — 4 sentences blocked.
+            (was 300 chars, too strict — 4 sentences blocked.
              Raised to 1500 chars (~3-4 paragraphs) to avoid UX paper cuts on
              normal briefs while still catching long sensitive narratives.)
         6. else → PASS.
     """
-    # Round 8 fix [Privacy-AGENTS]: scan the FULL prompt context, not just
+    # scan the FULL prompt context, not just
     # the brief. AGENTS.md and project_ctx are the most common bypass vectors
     # because they are loaded by adapters AFTER the gate runs.
-    # Round 10.1 fix [R2 — Unicode confusables / homoglyphs] (5/6 conv:
+    # (5/6 conv:
     # Grok, Qwen, Gemini, DeepSeek, Kimi): the regexes match ASCII digit/
     # letter ranges only. A NIR encoded with mathematical bold digits
     # (U+1D7CE-D7) or an email with fullwidth ``＠`` (U+FF20) bypassed the
@@ -409,7 +409,7 @@ def phase_minus_one_privacy_gate(
     else:
         full_text = text
 
-    # Round 5 fix [B]: normalize attestation to AttestationValue (Pydantic-safe)
+    # normalize attestation to AttestationValue (Pydantic-safe)
     attestation: AttestationValue = _normalize_attestation(
         declared_sensitivity if declared_sensitivity else _load_attestation(spec_path)
     )

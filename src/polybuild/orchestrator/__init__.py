@@ -88,14 +88,14 @@ logger = structlog.get_logger()
 # ────────────────────────────────────────────────────────────────
 
 
-# Round 10.2 fix [Kimi RX-001]: tasks created by the shutdown handler are
+# tasks created by the shutdown handler are
 # tracked here so run_polybuild() can await them explicitly in its finally
 # block, instead of relying on a fire-and-forget pattern.
-# Round 10.6 fix [Kimi RX-301-06 + Gemini ZB-01] (2/5 conv, P0): the list
+# (2/5 conv, P0): the list
 # was global and shared across concurrent runs in the same process; one
 # run's shutdown drained another run's tasks. Switched to a per-run-id
 # registry so concurrent runs are isolated.
-# Round 10.7 fix [MiniMax B-01 + Qwen QW-D-03 P1]: the previous comment
+# the previous comment
 # claimed the dict was "guarded by an asyncio.Lock" but the lock was
 # defined and never acquired. The actual safety guarantee is that all
 # accesses happen on the same asyncio event-loop thread (signal callback
@@ -109,7 +109,7 @@ _SHUTDOWN_DRAIN_TASKS: dict[str, list[asyncio.Task[None]]] = {}
 def _resolve_config_root() -> Path:
     """Locate ``config/`` in editable, wheel and CI installs.
 
-    Round 10.3 fix [ChatGPT RX-301-03 P0]: previous resolution
+    previous resolution
     ``Path(__file__).parent.parent.parent / "config"`` lands in
     ``src/config`` because the file lives at
     ``src/polybuild/orchestrator/__init__.py`` — the third ``.parent``
@@ -137,7 +137,7 @@ def _resolve_config_root() -> Path:
         if (candidate / "routing.yaml").exists():
             return candidate
 
-    # POLYLENS run #3 P0 (Grok 4.3 web): the wheel install path was
+    # the wheel install path was
     # broken. ``[tool.hatch.build.targets.wheel.force-include]`` ships
     # ``config/`` AT ``polybuild/config/`` (i.e. INSIDE the package),
     # not next to it as ``site-packages/config/``. The previous walk
@@ -169,7 +169,7 @@ def _handle_shutdown_signal(sig: int, run_id: str) -> None:
     tasks of the current run. The orchestrator's outer `finally:` block then
     runs phase_9_cleanup_async before the process exits.
 
-    Round 10.1 fix [R3 — graceful shutdown] (4/5 conv: Grok, Gemini, DeepSeek,
+    (4/5 conv: Grok, Gemini, DeepSeek,
     Kimi): a plain ``task.cancel()`` does not propagate into coroutines
     wrapped in ``asyncio.shield()``. We additionally schedule a fallback
     ``gather(..., return_exceptions=True)`` with a short timeout so that
@@ -191,7 +191,7 @@ def _handle_shutdown_signal(sig: int, run_id: str) -> None:
             pending.append(task)
 
     # Best-effort cooperative drain — bounded so we never block cleanup.
-    # Round 10.2 fix [Kimi RX-001 P0]: do NOT fire-and-forget the drain.
+    # do NOT fire-and-forget the drain.
     # Schedule it on the running loop and stash the resulting Task so the
     # outer ``finally`` block in run_polybuild can await it before invoking
     # phase_9 cleanup. We still suppress RuntimeError for the corner case
@@ -213,7 +213,7 @@ def _handle_shutdown_signal(sig: int, run_id: str) -> None:
 
 
 def _atomic_write_text(target: Path, payload: str) -> None:
-    """Round 10.8 fix [Kimi B-01 P1]: shared atomic-write helper.
+    """shared atomic-write helper.
 
     Mirrors ``save_checkpoint``'s tmp+rename + EXDEV fallback so that any
     caller writing a final artefact gets the same crash-safety guarantee.
@@ -240,13 +240,13 @@ def save_checkpoint(
 ) -> None:
     """Atomically write a checkpoint.
 
-    Round 10.7 fix [MiniMax B-02 P1]: ``Path.rename`` raises ``OSError`` with
+    ``Path.rename`` raises ``OSError`` with
     ``errno.EXDEV`` when source and target are on different filesystems
     (common in Docker bind mounts where ``.polybuild`` lives on tmpfs and
     the project root is on overlayfs). Mirrors the cross-device-safe copy
     helper already used in Phase 7.
 
-    Round 10.7 fix [Codex validation PB-R107-CHK-ATOMIC-EXDEV P1]: previous
+    previous
     fallback used ``shutil.copy2(tmp, target)`` directly — that is NOT
     atomic. A reader observing ``target`` mid-copy would see a partial
     file. Real fix: copy ``tmp`` to a sibling tmp on the destination
@@ -281,7 +281,7 @@ def save_checkpoint(
 
 
 def _sanitize_run_id(raw: str) -> str:
-    """Round 10.8 fix [Kimi A-03/A-04/A-05 P1]: ``run_id`` is concatenated
+    """``run_id`` is concatenated
     into filesystem paths and prompt XML wrappers throughout the codebase.
     Reject anything that could escape:
 
@@ -303,7 +303,7 @@ def _sanitize_run_id(raw: str) -> str:
 def generate_run_id() -> str:
     """Format: 2026-05-03_143022_<16-hex>.
 
-    Round 10.6 fix [Gemini ZB-03 P1]: ``token_hex(2)`` only had 65 536
+    ``token_hex(2)`` only had 65 536
     possible suffixes — at one run/sec the birthday-bound collision rate
     is ~1/256 per hour. Two concurrent collisions silently overwrite each
     other's checkpoints. Using ``token_hex(8)`` (= 16 hex chars / 64 bit)
@@ -351,14 +351,14 @@ async def run_polybuild(
     Returns:
         PolybuildRun with all metadata, archived to disk.
 
-    Round 5 fix [N]: Phase 9 cleanup is now in an outer `finally:` so it
+    Phase 9 cleanup is now in an outer `finally:` so it
     runs on *every* exit path (privacy gate block, abort in P5/P6, exception),
     not just the happy path. Audit 5 flagged this trou de spec.
     """
     if strategy is None:
         strategy = ConsensusPipeline()
     # Round 5 [M]: optional run_id override from project_ctx (skill /polybuild)
-    # Round 10.8 fix [Kimi A-03/A-04/A-05 P1, cross-voice audit]: ``run_id``
+    # ``run_id``
     # is concatenated into filesystem paths in many places (worktree dirs,
     # checkpoint files, spec_final.json, prompt XML wrappers). A user-
     # supplied override containing ``../`` or ``\\n`` would escape the
@@ -370,7 +370,7 @@ async def run_polybuild(
     started_at = datetime.now(UTC)
     artifacts_dir = project_root / ".polybuild" / "runs"
 
-    # Round 9 fix [SIGINT] (3-conv: Claude + ChatGPT + Grok):
+    # (3-conv: Claude + ChatGPT + Grok):
     #   Without explicit signal handling, asyncio cancels the inner task on
     #   Ctrl+C but the cleanup block in `finally:` only runs because Python's
     #   exception machinery propagates KeyboardInterrupt — and only IF the
@@ -423,7 +423,7 @@ async def run_polybuild(
             with contextlib.suppress(NotImplementedError, RuntimeError):
                 loop.remove_signal_handler(registered_sig)
 
-        # Round 10.2 fix [Kimi RX-001 P0]: drain tasks scheduled by the
+        # drain tasks scheduled by the
         # shutdown signal handler (cf. ``_handle_shutdown_signal``). Without
         # this await, asyncio raises "Task was destroyed but it is pending"
         # warnings AND the cooperative drain effectively becomes
@@ -440,10 +440,10 @@ async def run_polybuild(
             except (TimeoutError, asyncio.CancelledError) as exc:
                 logger.warning("shutdown_drain_timeout", error=str(exc))
 
-        # Round 5 fix [N]: always-run cleanup, even if Phase -1 blocked, an
+        # always-run cleanup, even if Phase -1 blocked, an
         # exception was raised, or we early-returned with _build_aborted_run.
         #
-        # Round 6 fix [Exception-swallowing] (Audit 6 Kimi P1):
+        # (Audit 6 Kimi P1):
         #   1. Capture the in-flight exception (if any) via sys.exc_info() BEFORE
         #      cleanup, so we can log it even if cleanup itself raises.
         #   2. Wrap each cleanup operation in its own try/except so a single
@@ -541,7 +541,7 @@ async def _run_polybuild_inner(
     # or an explicit spec_yaml_path passed in via project_ctx.
     spec_yaml_path = (project_ctx or {}).get("spec_yaml_path")
 
-    # Round 10.6 fix [Gemini ZB-06 P1 — path traversal]: the spec.yaml
+    # the spec.yaml
     # path is caller-supplied; without normalisation a value such as
     # ``../../etc/passwd`` would escape the project root. Resolve and
     # require the result to be inside ``project_root``.
@@ -560,12 +560,12 @@ async def _run_polybuild_inner(
             ) from e
     declared_sensitivity = (project_ctx or {}).get("declared_sensitivity")
 
-    # Round 8 fix [Privacy-AGENTS] (4/6 audits round 8 P0 — Grok, Qwen, ChatGPT,
+    # (4/6 audits round 8 P0 — Grok, Qwen, ChatGPT,
     # Kimi): the gate must scan the FULL prompt context, not just the brief.
     # Adapters inject AGENTS.md and project_ctx into the LLM prompt AFTER the
     # gate runs, so PII hidden in those documents would bypass the gate
     # entirely. Concatenate them here.
-    # Round 10 fix [R1 — prompt injection via AGENTS.md] (6/6 convergence:
+    # (6/6 convergence:
     # Grok, Qwen, Gemini, DeepSeek, ChatGPT, Kimi): both AGENTS.md and the
     # caller-supplied project_ctx text are sanitized through
     # ``sanitize_prompt_context`` before being concatenated. HTML/Markdown
@@ -695,7 +695,7 @@ async def _run_polybuild_inner(
         )
 
     # ── Phase 6: validation ──
-    # Round 9 fix [Kimi-domain-gates] (Kimi P0): the orchestrator was calling
+    # (Kimi P0): the orchestrator was calling
     # phase_6_validate(spec, winner_result, artifacts_dir) without passing
     # domain_gate_configs. Result: every domain gate (MCP, SQLite, Qdrant,
     # FTS5, RAG) received None → empty config → silent failure on profiles
@@ -765,7 +765,7 @@ async def _run_polybuild_inner(
 
         endpoint = project_ctx["phase_8_endpoint"]
 
-        # Round 10.6 fix [Gemini ZB-02 P0 — SSRF]: phase_8_endpoint comes
+        # phase_8_endpoint comes
         # straight from project_ctx (caller-controlled). Without an
         # allowlist, an attacker that can populate project_ctx can pivot
         # the smoke phase to localhost / link-local / cloud metadata
@@ -860,7 +860,7 @@ async def _run_polybuild_inner(
     # ── Phase 9 cleanup is now in run_polybuild()'s outer finally (round 5 [N]) ──
 
     # Final archival
-    # Round 10.8 fix [Kimi B-01 P1, cross-voice audit]: previously a raw
+    # previously a raw
     # ``write_text`` here. A full-disk / read-only / cross-device error at
     # the LAST millisecond would crash a successful 45+ minute run with
     # an unhandled OSError. Reuse the same atomic + EXDEV-safe pattern as
@@ -928,7 +928,7 @@ def _build_aborted_run(
     )
 
 
-# POLYLENS run #5 P3 (Kimi): the previous module shipped without an
+# the previous module shipped without an
 # ``__all__``, so ``from polybuild.orchestrator import *`` exported
 # every transitively-imported symbol (``json``, ``os``, ``Path``,
 # ``Any``, every Pydantic model, every phase). This declaration

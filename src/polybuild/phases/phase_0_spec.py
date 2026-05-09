@@ -121,7 +121,7 @@ Hard rules:
 
     # We use the raw subprocess invocation directly here because the spec is
     # text, not a code module on disk.
-    # Round 10.1 fix [Kimi P0 #1]: the orchestrator's signal handlers cancel
+    # the orchestrator's signal handlers cancel
     # asyncio tasks on SIGINT/SIGTERM, but without ``start_new_session=True``
     # the spawned ``claude code`` process stays in the parent's process group.
     # On macOS/Linux the orchestrator can then call ``os.killpg`` on a
@@ -232,7 +232,7 @@ If a list is empty, return [].
             },
         )
         response.raise_for_status()
-        # Round 10.7 fix [POLYLENS v3 Qwen B-04 P1]: same OpenRouter
+        # same OpenRouter
         # malformed-response defence as the rest of the codebase.
         # Direct subscript chain crashes on rate-limit/refusal payloads.
         payload = response.json()
@@ -327,7 +327,7 @@ Output the COMPLETE revised spec as JSON, same schema as before.
     try:
         return json.loads(raw)  # type: ignore[no-any-return]
     except json.JSONDecodeError:
-        # Round 10.7 fix [POLYLENS v3 Qwen B-05 P1]: greedy ``\{.*\}`` over
+        # greedy ``\{.*\}`` over
         # ``re.DOTALL`` matches across multiple JSON blocks and trailing
         # text. Switch to non-greedy (``\{.*?\}``) and prefer the LAST
         # balanced object — Opus revisions tend to put their final answer
@@ -400,8 +400,7 @@ async def phase_0_spec(
     canonical = json.dumps(final_dict, sort_keys=True, ensure_ascii=False)
     spec_hash = hashlib.sha256(canonical.encode()).hexdigest()
 
-    # Round 10.2 fix [Kimi adversarial — poisoned spec.task_description]:
-    # Phase 0 receives the user's raw brief via Opus and may interpolate
+    #     # Phase 0 receives the user's raw brief via Opus and may interpolate
     # parts of it into ``task_description``. Without sanitization, an
     # injection in the brief survives all the way to Phase 2 builders'
     # ``_build_prompt`` (each adapter concatenates it into the LLM input).

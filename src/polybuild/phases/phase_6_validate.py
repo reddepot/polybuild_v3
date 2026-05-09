@@ -159,7 +159,7 @@ async def _run_single_domain_gate(
             golden_path=golden_path,
             require_golden_file=bool(cfg.get("require_golden_file", True)),
         )
-        # Round 6 fix [fts5-skipped] (Audit 1 P1): when skipped=True, the gate
+        # (Audit 1 P1): when skipped=True, the gate
         # didn't actually validate anything. Surface it explicitly in the
         # signals so phase_6 notes mention "skipped" rather than just "passed".
         signals = list(fts5_result.errors) + list(fts5_result.failures)

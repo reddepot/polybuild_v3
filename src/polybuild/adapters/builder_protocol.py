@@ -3,7 +3,7 @@
 Every model (CLI or OpenRouter or local Ollama) exposes the same async API.
 This is the contract that makes Phase 2 parallel orchestration possible.
 
-Round 5 fix [O] (Audit 2 P0): added concrete `run_raw_prompt()` method with a
+(Audit 2 P0): added concrete `run_raw_prompt()` method with a
 default implementation. Phase 5 triade was calling
 `builder.generate(prompt=..., workdir=..., timeout_s=..., role=...)` which does
 not match `generate(self, spec, cfg)` — would have crashed all 7 adapters with
@@ -91,15 +91,14 @@ class BuilderProtocol(ABC):
         no AGENTS.md injection). Default impl wraps generate() with a minimal
         synthetic Spec+VoiceConfig.
 
-        Round 6 fix [O2]:
-          - Audit 4: default impl violated "verifier never rewrites code" —
+                  - Audit 4: default impl violated "verifier never rewrites code" —
             generate() can create a worktree. Now we set
             `context["raw_prompt_no_write"]=True` which adapters MUST honor
             to short-circuit any worktree creation for verifier/critic roles.
           - Audit 6: default impl dropped risk_profile, losing medical_high
             constraints in Phase 5 prompts. Now propagated through context.
 
-        Round 7 fix [O3] (Gemini P0 + ChatGPT CONDITIONAL_GO):
+        (Gemini P0 + ChatGPT CONDITIONAL_GO):
           The previous round-6 patch was insufficient. CLI adapters wrap any
           spec.task_description in `<INSTRUCTIONS>Generate a complete Python
           module...</INSTRUCTIONS>` via `_build_prompt()`, so feeding a
@@ -132,7 +131,7 @@ class BuilderProtocol(ABC):
         no_write_roles = {"critic", "verifier", "judge", "auditor"}
         no_write = normalized_role in no_write_roles
 
-        # Round 10.7 fix [GLM A-04 P1]: ``hash()`` salts are randomized
+        # ``hash()`` salts are randomized
         # per-process (``PYTHONHASHSEED=random`` is the default), so the
         # same prompt yields different ``run_id`` values across processes
         # — breaking dedup, caching, and reproducibility. Use a stable

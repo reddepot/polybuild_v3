@@ -198,7 +198,7 @@ def matrix_select(
     for combo in combinations(pool, needed):
         triad = list(fixed) + list(combo)
         # Hard rule: no two voices same provider
-        # Round 9 fix [Kimi-medical-providers] (Kimi P0): exception for
+        # (Kimi P0): exception for
         # local-only profiles (medical_high) where RGPD constraints force
         # all voices to ollama-hosted models. The model_dimensions.yaml
         # explicitly documents medical_high_local with 2 qwen voices —

@@ -87,7 +87,7 @@ class Spec(BaseModel):
     interfaces: dict[str, Any] = Field(default_factory=dict)  # Pydantic schemas, DB schemas
     risk_profile: RiskProfile
     spec_hash: str = ""  # SHA-256, calculé après Phase 0c
-    # Round 10.7 fix [POLYLENS v3 Qwen B-02 P2]: the previous default
+    # the previous default
     # factory used a deprecated naive UTC API. Use a timezone-aware
     # ``datetime.now(UTC)`` factory instead.
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -182,7 +182,7 @@ class GateResults(BaseModel):
 class VoiceScore(BaseModel):
     """Final score and verdict for a single voice.
 
-    POLYLENS run #4 P1 (Grok 4.3): ``is_solo_stub`` flags entries
+    ``is_solo_stub`` flags entries
     synthesised by ``SoloPipeline`` when Phase 3 is skipped — the
     score is not the result of a real comparison, it's a placeholder
     so ``PolybuildRun`` aggregation and downstream metrics keep

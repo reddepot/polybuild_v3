@@ -149,7 +149,7 @@ class MistralEUAdapter(BuilderProtocol):
         return worktree
 
     def _build_prompt(self, spec: Spec, cfg: VoiceConfig, worktree: Path) -> str:
-        # Round 7 fix [O3] (Gemini P0 + ChatGPT CONDITIONAL_GO):
+        # (Gemini P0 + ChatGPT CONDITIONAL_GO):
         # When called from Phase 5 triade via run_raw_prompt(), the synthetic
         # Spec.task_description IS the actual prompt (critic/fixer/verifier
         # template). Wrapping it in <AGENTS_MD>/<TASK_PROFILE>/<INSTRUCTIONS>
@@ -193,7 +193,7 @@ EU-only routing. Output ONLY valid JSON.
     def _load_agents_md(self) -> str:
         """Load AGENTS.md sanitized through sanitize_prompt_context.
 
-        Round 10.2.1 fix [ChatGPT RX-001 P0 + Kimi RX-007 P1] — adapters
+        — adapters
         were embedding the raw file content into the LLM prompt, bypassing
         the sanitization the orchestrator applied for the privacy gate.
         We now sanitize at every injection point as defence in depth.
@@ -212,8 +212,7 @@ EU-only routing. Output ONLY valid JSON.
         except json.JSONDecodeError as e:
             return self._failed_result(cfg, worktree, duration, f"Invalid JSON: {e}")
 
-        # Round 10.8 fix [ChatGPT A-02 + Kimi A-01, 2/5 cross-voice P0]:
-        # same path traversal as the ollama_local + openrouter adapters.
+        #         # same path traversal as the ollama_local + openrouter adapters.
         # Use shared helper for consistency.
         from polybuild.security.safe_write import write_files_to_worktree
 

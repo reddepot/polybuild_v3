@@ -1,9 +1,9 @@
 """Atomic file-write helper shared across audit subsystems.
 
-POLYLENS run #2 P0: ``mark_entry_processed`` rewrote the queue file
+``mark_entry_processed`` rewrote the queue file
 in-place via ``Path.write_text``. A crash between truncate and full
 flush would lose every unprocessed entry — exactly the failure mode
-POLYLENS-FIX-3 set out to prevent. The fix factors the same atomic
+set out to prevent. The fix factors the same atomic
 write that :mod:`polybuild.audit.rotation` already uses for its state
 file into a small reusable helper, so any audit module that needs to
 replace a file's contents does so via temp + ``Path.replace`` + dir
@@ -44,12 +44,12 @@ def atomic_write_text(
         parent_mode: mode for the parent directory if it has to be
             created. Defaults to ``0o700`` because the helper grew up
             in the audit subsystem (per-user state, secrets-adjacent).
-            POLYLENS run #4 P3 (Perplexity): callers writing to a
+            callers writing to a
             shared worktree (eg. ``polybuild.security.safe_write``)
             override to ``0o755`` so CI runners and reviewers can
             still read the generated directory.
 
-    POLYLENS run #5 P2 (Gemini): ``tempfile.mkstemp`` always creates
+    ``tempfile.mkstemp`` always creates
     the temp file at hard-coded ``0o600`` regardless of the parent
     mode, so the ``parent_mode=0o755`` worktree fix only opened the
     directory but left every emitted file unreadable to the user's
@@ -77,7 +77,7 @@ def atomic_write_text(
             tmp_path.unlink(missing_ok=True)
         raise
 
-    # POLYLENS run #5 P2: mkstemp's 0o600 default is right for audit
+    # : mkstemp's 0o600 default is right for audit
     # state but wrong for shared worktrees. Mirror the parent's
     # readable bits so a 0o755 directory yields a 0o644 file.
     file_mode = 0o644 if parent_mode == 0o755 else 0o600

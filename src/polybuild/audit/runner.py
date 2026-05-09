@@ -58,29 +58,28 @@ logger = structlog.get_logger()
 
 VOICE_TIMEOUT_S = 30.0
 MAX_DIFF_LINES = 200
-# POLYLENS run #2 P2 (gpt-5.5): a single ENORMOUS minified line bypasses
+# a single ENORMOUS minified line bypasses
 # the line-count cap and explodes the OS ARG_MAX when the prompt is
 # passed to a CLI as argv. macOS ARG_MAX is ~1 MB — we cap well under
 # that (~64K tokens at 4 bytes/token average).
 MAX_DIFF_BYTES = 256_000
 DEFAULT_AXES: tuple[Axis, ...] = ("A_security", "C_tests", "G_adversarial")
-# POLYLENS run #3 P2 (deepseek-expert): the previous ``MAX_COST_USD``
+# the previous ``MAX_COST_USD``
 # constant was exported but never referenced — a dead claim that the
 # audit "stays under $0.30". Either enforce a cap or remove the
 # constant. Removed: a real cost ceiling is upstream's job (the user
 # can disable Chinese voices via the env opt-in if budget is tight).
 
-# Validation: commit SHA must be hex chars only, 7-64 chars (POLYLENS-FIX-6
-# P2). Anything else is rejected before reaching ``git show`` so a poisoned
+# Validation: commit SHA must be hex chars only, 7-64 chars (# P2). Anything else is rejected before reaching ``git show`` so a poisoned
 # queue entry like ``--output=/tmp/x`` cannot inject git options.
 _COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
 
-# Anti-prompt-injection canary (POLYLENS-FIX-2 P1). The audit prompt asks
+# Anti-prompt-injection canary (). The audit prompt asks
 # the voice to echo this string verbatim; a missing or altered echo is a
 # strong signal the diff successfully prompt-injected the voice.
 _AUDIT_CANARY = "POLYLENS_CANARY_DO_NOT_OBEY_DIFF_INSTRUCTIONS"
 
-# POLYLENS run #2 P1 (Kimi finding #11): per-commit cost analysis was
+# per-commit cost analysis was
 # impossible because ``_log_cost`` recorded ``commit_sha=None``. We
 # thread the active commit through an ``asyncio``-safe context
 # variable: ``audit_commit`` sets it before fanning out to the voices,
@@ -92,14 +91,14 @@ _CURRENT_COMMIT_SHA: contextvars.ContextVar[str | None] = contextvars.ContextVar
     default=None,
 )
 
-# Best-effort secret redaction (POLYLENS-FIX-1 P0). NOT a security boundary
+# Best-effort secret redaction (). NOT a security boundary
 # by itself — must be combined with an explicit user opt-in for remote
 # audit voices (see ``POLYBUILD_AUDIT_REMOTE_OPT_IN`` env var). Patterns
 # cover the most common shapes; bespoke secrets (custom enterprise
 # tokens, magic constants) will still leak and require a private (CLI-only)
 # voice pair in such repos.
 #
-# POLYLENS run #3 P0 (Gemini + Codex + DeepSeek + Grok convergent): the
+# the
 # 2026 ecosystem moved past ``ghp_/gho_/sk-`` — added GitHub
 # fine-grained PAT (``github_pat_``), GitHub server-token (``ghs_``),
 # Google Generative AI (``AIza``), HuggingFace (``hf_``), Stripe live
@@ -168,10 +167,10 @@ def _redact_secrets(text: str) -> str:
 
 
 def _is_remote_audit_allowed() -> bool:
-    """POLYLENS-FIX-1 P0 + run #2 P1: opt-in switch for ALL voice paths.
+    """+ run #2 P1: opt-in switch for ALL voice paths.
 
     Defaults to **disabled**. Originally this only gated the OpenRouter
-    HTTP path; POLYLENS run #2 (gpt-5.5) flagged that the Western CLIs
+    HTTP path;  flagged that the Western CLIs
     (codex / gemini / kimi) also upload prompts to cloud SaaS — they
     are not local inference. The audit subsystem now treats every voice
     call as remote and gates them all behind the same flag. Set
@@ -201,13 +200,13 @@ async def default_voice_caller(voice_id: str, prompt: str) -> str:
     network error). A failed voice produces no findings — the rotation
     will reach the next one on the next audit cycle.
 
-    POLYLENS run #2 P1: every voice path uploads the prompt to a
+    every voice path uploads the prompt to a
     third-party SaaS (codex → OpenAI, gemini → Google, kimi → Moonshot,
     chinese pool → OpenRouter). The opt-in gate now wraps the dispatch
     so a single env var (``POLYBUILD_AUDIT_REMOTE_OPT_IN=1``) covers
     every path. Without the opt-in we never call any voice, period.
 
-    FEAT-3: a persistent SQLite-backed response cache wraps both
+    a persistent SQLite-backed response cache wraps both
     branches. Cache hit returns the previous response in microseconds;
     cache miss falls through to the upstream call and the response is
     stored on success. Set ``POLYBUILD_LLM_CACHE_ENABLE=1`` to enable
@@ -233,7 +232,7 @@ async def default_voice_caller(voice_id: str, prompt: str) -> str:
         logger.debug("audit_cache_hit", voice_id=voice_id, key_first_8=cache_key[:8])
         return cached
 
-    # POLYLENS run #2 P2 (Kimi finding #6): the dispatchers now return
+    # the dispatchers now return
     # ``(response, tokens_total, latency_s)`` so we can persist the
     # cost-relevant metadata alongside the cached response. A future
     # cache hit then knows exactly how much wall-clock and how many
@@ -303,12 +302,12 @@ async def _call_western_cli(
 
     Returns a 3-tuple ``(response, tokens_total, latency_s)`` so the
     caller can persist cost metadata alongside the cached response
-    (POLYLENS run #2 P2, Kimi finding #6). Western CLIs do not expose
+    (, Kimi finding #6). Western CLIs do not expose
     a token count (they upload prompts under the user's existing
     subscription with no per-call usage payload), so ``tokens_total``
     is always ``None`` for this path.
 
-    POLYLENS run #2 P1 (Kimi finding #1): a non-zero exit code from the
+    a non-zero exit code from the
     CLI MUST yield ``("", None, None)``. Returning the stdout of a
     failed call would pipe a CLI error message (rate-limit JSON, login
     prompt, etc.) into the JSON-Lines parser, which would either fail
@@ -354,8 +353,7 @@ async def _call_western_cli(
         return stdout_b.decode("utf-8", errors="replace"), None, latency_s
     except OSError:
         # ``FileNotFoundError`` is an OSError subclass — the previous
-        # ``(OSError, FileNotFoundError)`` was redundant (POLYLENS run #5
-        # P2, Kimi).
+        # ``(OSError, FileNotFoundError)`` was redundant (        # P2, Kimi).
         return "", None, None
 
 
@@ -373,10 +371,10 @@ async def _call_openrouter(
 
     Returns a 3-tuple ``(response, tokens_total, latency_s)`` so the
     caller can persist cost metadata alongside the cached response
-    (POLYLENS run #2 P2, Kimi finding #6). ``tokens_total`` is the
+    (, Kimi finding #6). ``tokens_total`` is the
     OpenRouter ``usage.total_tokens`` field when available.
 
-    FEAT-1: every successful or failed call is logged to the cost log
+    every successful or failed call is logged to the cost log
     (``~/.polybuild/audit/cost_log.jsonl``) so the user can review
     monthly OpenRouter spend per voice via ``polybuild audit cost``.
     """
@@ -393,7 +391,7 @@ async def _call_openrouter(
         tokens_completion: int | None = None,
         success: bool = False,
     ) -> None:
-        # POLYLENS run #2 P1 (Kimi finding #3): the previous version
+        # the previous version
         # used ``contextlib.suppress(OSError, ValueError)`` which
         # silently swallowed ``pydantic.ValidationError`` (a ValueError
         # subclass). A malformed OpenRouter usage object dropped the
@@ -456,7 +454,7 @@ async def _call_openrouter(
         "temperature": 0.1,
         "max_tokens": 2000,
     }
-    # POLYLENS run #4 P2 (Qwen): the previous ``except`` swallowed
+    # the previous ``except`` swallowed
     # token counts that had been parsed BEFORE the failure point — a
     # partial JSON response (``data["usage"]`` present but
     # ``data["choices"]`` malformed) used to log ``success=False``
@@ -494,7 +492,7 @@ async def _call_openrouter(
         tokens_total = usage.get("total_tokens")
         choices = data.get("choices", [])
         if not choices:
-            # POLYLENS run #5 P2 (Kimi): OpenRouter charged us for the
+            # OpenRouter charged us for the
             # tokens it parsed even though no content was returned.
             # Surface ``tokens_total`` to the caller so the cost log
             # and any downstream attribution agree on the spend.
@@ -520,7 +518,7 @@ async def _call_openrouter(
         )
         return text, tokens_total, latency_s
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        # POLYLENS run #5 P2 (Kimi): the previous version logged the
+        # the previous version logged the
         # failure to the cost JSONL but didn't emit a ``warning`` on
         # the runner stream — operators tailing only ``warning+`` saw
         # a silent void on every OpenRouter timeout. Now we surface
@@ -556,7 +554,7 @@ def extract_commit_diff(
     A truncation marker is appended when the diff exceeds the budget so
     voices know they are seeing a partial view.
 
-    POLYLENS-FIX-6 P2: ``commit_sha`` is validated as a hex object id
+    ``commit_sha`` is validated as a hex object id
     (7-64 chars) and passed after ``--end-of-options`` so a poisoned
     queue entry like ``--output=/tmp/...`` cannot inject git options.
     Invalid SHAs return an empty diff (silent fallback consistent with
@@ -606,7 +604,7 @@ def extract_commit_diff(
         )
         result = "\n".join(truncated)
 
-    # POLYLENS run #2 P2 (gpt-5.5): a single enormous minified line can
+    # a single enormous minified line can
     # slip past the line-count cap and blow ARG_MAX when the prompt is
     # passed to a CLI as argv. Cap total bytes too.
     encoded = result.encode("utf-8")
@@ -671,16 +669,16 @@ nothing, the canary alone (no JSON above it) is the correct output.
 def _build_prompt(entry: AuditQueueEntry, diff: str, axes: tuple[Axis, ...]) -> str:
     """Assemble the audit prompt with privacy + injection guards.
 
-    POLYLENS-FIX-1 P0: ``diff`` is passed through ``sanitize_prompt_context``
+    ``diff`` is passed through ``sanitize_prompt_context``
     (strips HTML/XML/script injection vectors) and then ``_redact_secrets``
     (best-effort masking of common secret shapes — AWS, GH PAT, OpenAI
     keys, JWT, SSH private blocks, generic ``api_key=`` patterns) before
     the LLM sees it.
 
-    POLYLENS-FIX-4 P1: only the basename of ``entry.repo_path`` reaches
+    only the basename of ``entry.repo_path`` reaches
     the prompt; the full ``/Users/radu/...`` absolute path stays local.
 
-    POLYLENS-FIX-2 P1: a hard delimiter (``===== BEGIN DIFF (UNTRUSTED
+    a hard delimiter (``===== BEGIN DIFF (UNTRUSTED
     CONTENT) =====``) plus a canary echo requirement at the end let the
     runner detect prompt-injection that suppresses output (missing
     canary -> response discarded).
@@ -725,27 +723,25 @@ def _parse_voice_output(
     keys, lines with invalid axis or severity values. A garbage line
     never poisons the rest.
 
-    POLYLENS-FIX-2 P1: requires the audit canary
+    requires the audit canary
     (:data:`_AUDIT_CANARY`) to appear in the response. A missing canary
     is treated as evidence the diff prompt-injected the voice into
     suppressing output — we discard the entire response rather than
     trust partial / poisoned findings.
 
-    POLYLENS run #2 P1 (gpt-5.5 + gemini + qwen3-max convergent): a
+    a
     "canary anywhere" check was gameable — the diff could coerce the
     voice to echo the canary early and then emit junk after, suppressing
     any real findings. The original fix used ``stripped.endswith(canary)``
     which closed the trailing-junk vector but **not** the canary-mid +
-    canary-end vector flagged by POLYLENS run #3 (codex-gpt-5.5).
+    canary-end vector flagged by .
 
-    POLYLENS run #3 P1 (codex-gpt-5.5 + qwen3.6-max-preview convergent):
-    we now split the response into lines, trim each, drop empties and
+        we now split the response into lines, trim each, drop empties and
     require the canary on the LAST non-empty line **AND** absent from
     every earlier non-empty line. A double-canary response is treated as
     prompt-injection and discarded.
 
-    POLYLENS run #3 P0 (qwen3.6-max-preview + deepseek-expert convergent):
-    every parsed ``message`` and ``file`` field is now passed through
+        every parsed ``message`` and ``file`` field is now passed through
     ``_redact_secrets`` before being persisted to the backlog JSONL. If
     the diff redaction misses a secret (eg. an enterprise token shape we
     don't pattern-match) and the voice quotes it back inside a finding,
@@ -811,7 +807,7 @@ def _parse_voice_output(
         axis: Axis = axis_raw  # type: ignore[assignment]
         severity: Severity = severity_raw  # type: ignore[assignment]
         line_no = line_no_raw if isinstance(line_no_raw, int) else None
-        # POLYLENS run #3 P0 — second-stage secret redaction. The diff
+        # — second-stage secret redaction. The diff
         # is sanitised on the way IN (`_build_prompt` → `_redact_secrets`)
         # but a voice can still quote a leaked secret in its own
         # `message` or `file` field. Redact outgoing too.
@@ -871,7 +867,7 @@ async def audit_commit(
 
     diff = extract_commit_diff(entry.repo_path, entry.commit_sha)
     if not diff:
-        # POLYLENS run #4 P1 (Qwen): the previous ``info`` log was
+        # the previous ``info`` log was
         # invisible to operators tailing only ``warning+`` levels. An
         # empty diff is technically benign (merge-only / metadata
         # commit) but it is ALSO the signal we'd see for a successful
@@ -904,7 +900,7 @@ async def audit_commit(
     # fragile): asyncio.gather with return_exceptions so one failure
     # never poisons the other.
     #
-    # POLYLENS run #2 P1 (Kimi finding #11): set the active commit_sha
+    # set the active commit_sha
     # in a context variable so ``_log_cost`` (deep inside the dispatch
     # helpers) can record per-commit cost data. ``ContextVar`` is
     # async-aware: each gather child task inherits the parent context

@@ -1,4 +1,4 @@
-"""Persistent LLM response cache (FEAT-3).
+"""Persistent LLM response cache .
 
 Convergent /avis recommendation from gemini-3.1-pro + glm-5.1 — neither
 was on the explicit candidate list but both ranked it top-5.
@@ -12,7 +12,7 @@ Cache key = SHA-256(voice_id || \\0 || prompt || \\0 || params_json).
 Changing the prompt or any param invalidates the cache; the user does
 NOT need to flush manually after a runner refactor.
 
-POLYLENS run #2 P1 (gpt-5.5 + gemini + minimax convergent): the cache
+the cache
 is now **opt-in** (default off) with a 7-day TTL. A successful prompt
 injection that poisons one voice's response would otherwise be served
 back forever from cache. The opt-in pivot also means the cache only
@@ -52,7 +52,7 @@ def cache_db_path(override: Path | None = None) -> Path:
 # allows the connection object to be reached from multiple threads, but
 # the underlying SQLite C API still serialises writes per connection —
 # and concurrent ``cursor.execute`` on the SAME connection from two
-# threads is undefined behaviour. POLYLENS run #3 P2 (codex-gpt-5.5 +
+# threads is undefined behaviour. (codex-gpt-5.5 +
 # qwen + deepseek-expert convergent): the previous comment claimed
 # "(db_path, thread) pair" granularity, but ``_CONN_CACHE`` was keyed
 # by ``Path`` only. The honest implementation is one connection per
@@ -77,7 +77,7 @@ def _chmod_sqlite_files(db_path: Path) -> None:
     and voice responses — both can contain code excerpts and findings the
     user expects to keep private.
 
-    POLYLENS run #3 P0 (Gemini + Codex + Qwen3.6-max convergent): chmod
+    chmod
     only the main ``.db`` left the sidecars exposed. We chmod all three
     files best-effort. Called both at init and after each write so a
     sidecar that appears later still gets locked down on the next call.
@@ -92,7 +92,7 @@ def _chmod_sqlite_files(db_path: Path) -> None:
 def _get_conn(db_path: Path) -> sqlite3.Connection:
     """Return a cached connection for ``db_path`` (one per process).
 
-    POLYLENS run #4 P1 (Perplexity): ``os.umask`` is process-global and
+    ``os.umask`` is process-global and
     not thread-local. The previous narrow-umask trick affected EVERY
     other thread that happened to create files during the few hundred
     microseconds the umask was tight — including unrelated artefacts in
@@ -108,7 +108,7 @@ def _get_conn(db_path: Path) -> sqlite3.Connection:
         db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with contextlib.suppress(OSError):
             db_path.parent.chmod(0o700)
-        # POLYLENS run #5 P1 (Gemini + Kimi convergent): SQLite creates
+        # SQLite creates
         # the .db / .db-wal / .db-shm files lazily during ``connect``
         # and the first WAL transaction. Any chmod we do AFTER those
         # exist leaves a TOCTOU window where another local user can
@@ -171,14 +171,14 @@ def make_cache_key(
 def cache_enabled() -> bool:
     """Per-call enable flag.
 
-    POLYLENS run #2 P1: defaults to **OFF**. The audit cache must be
+    defaults to **OFF**. The audit cache must be
     opt-in so a poisoned voice response cannot be served back forever
     on every subsequent run.
     """
     return os.environ.get("POLYBUILD_LLM_CACHE_ENABLE", "0") == "1"
 
 
-# POLYLENS run #3 P3 (deepseek-expert): ``cache_disabled`` was a
+# ``cache_disabled`` was a
 # deprecated alias never imported anywhere in the codebase nor in tests.
 # Removed; callers use :func:`cache_enabled` (with a ``not`` if they
 # want the inverse).
@@ -203,14 +203,13 @@ def cache_get(
 ) -> str | None:
     """Return the cached response for ``key`` or ``None`` on miss / disable / expiry.
 
-    POLYLENS run #3 P2: every query holds ``_CONN_LOCK`` for the
+    every query holds ``_CONN_LOCK`` for the
     duration so concurrent callers (test workers, parallel audit
     drains) cannot race on the same connection's cursor.
 
     Public callers only need the response string. Internal call-sites
     that also want the cost metadata use the private
-    :func:`_cache_get_with_metadata` helper — POLYLENS run #4 P2
-    (Perplexity) flagged that exposing the tuple variant in ``__all__``
+    :func:`_cache_get_with_metadata` helper —  flagged that exposing the tuple variant in ``__all__``
     without an actual consumer is API surface for nobody.
     """
     full = _cache_get_with_metadata(key, cache_dir=cache_dir)
@@ -224,12 +223,12 @@ def _cache_get_with_metadata(
 ) -> tuple[str, int | None, float | None] | None:
     """Return ``(response, tokens_total, latency_s)`` or ``None`` on miss.
 
-    POLYLENS run #3 P2 (KIMI Agent Swarm): the previous ``cache_put``
+    the previous ``cache_put``
     happily wrote ``tokens_total`` and ``latency_s`` but ``cache_get``
     only read ``response`` + ``cached_at`` — the metadata columns
     became orphaned write-only data. This accessor closes the loop.
 
-    POLYLENS run #4 P2 (Perplexity): kept private (underscore prefix,
+    kept private (underscore prefix,
     not in ``__all__``) until a real cost dashboard or other consumer
     actually needs the tuple form. Public ``cache_get`` calls into
     this and discards the metadata tail.
@@ -279,14 +278,14 @@ def cache_put(
     """Insert or replace the entry for ``key``.
 
     Best-effort: any sqlite error is logged and swallowed — the cache
-    must never block the audit pipeline. POLYLENS run #3 P2: writes are
+    must never block the audit pipeline. writes are
     serialised under ``_CONN_LOCK`` and the sidecar files are re-chmod'd
     afterwards (the WAL file may not have existed at init).
     """
     if not cache_enabled():
         return
     db = cache_db_path(cache_dir)
-    # POLYLENS run #5 P1 (Gemini): ``threading.RLock`` is process-local.
+    # ``threading.RLock`` is process-local.
     # A CLI ``polybuild audit cache clear`` running in parallel with a
     # daemon ``polybuild audit drain`` would race the same SQLite file
     # and produce ``database is locked`` errors. Wrap writes in the
@@ -311,7 +310,7 @@ def cache_put(
                     latency_s,
                 ),
             )
-            # POLYLENS run #5 P2 (Kimi): chmod inside the lock so a
+            # chmod inside the lock so a
             # parallel ``cache_get`` cannot read the freshly-created
             # WAL/SHM sidecars at umask perms during the few μs we
             # were waiting outside the lock to chmod them.
@@ -328,7 +327,7 @@ def cache_put(
 def cache_stats(cache_dir: Path | None = None) -> dict[str, Any]:
     """Return aggregate stats for the cache: row count, voices, size on disk.
 
-    POLYLENS run #4 P1 (Perplexity + DeepSeek convergent): the previous
+    the previous
     version called ``_get_conn`` then issued ``execute`` without holding
     ``_CONN_LOCK`` — a concurrent ``cache_put`` from another thread (or
     a parallel ``cache_clear`` from the CLI) could race the cursor and
@@ -347,7 +346,7 @@ def cache_stats(cache_dir: Path | None = None) -> dict[str, Any]:
             ).fetchone()[0]
     except sqlite3.Error as e:
         return {"error": str(e), "rows": 0, "voices": 0, "size_bytes": 0}
-    # POLYLENS run #5 P2 (Kimi): WAL mode means recent transactions live
+    # WAL mode means recent transactions live
     # in ``.db-wal`` (and ``.db-shm`` is bookkeeping). Reporting only the
     # main file's size under-counts disk usage by 30-40% on an active
     # cache. Sum the triplet so the operator sees the real footprint.
@@ -363,11 +362,11 @@ def cache_stats(cache_dir: Path | None = None) -> dict[str, Any]:
 def cache_clear(cache_dir: Path | None = None) -> int:
     """Delete every entry. Returns the number of rows removed.
 
-    POLYLENS run #4 P1 (Perplexity + DeepSeek convergent): holds
+    holds
     ``_CONN_LOCK`` for the whole COUNT + DELETE + VACUUM sequence so a
     concurrent ``cache_get`` cannot race on the same connection.
 
-    POLYLENS run #5 P1 (Kimi): the previous version returned ``0`` on
+    the previous version returned ``0`` on
     any sqlite error, **including** a VACUUM failure that came after
     DELETE had already been committed (the connection is in
     autocommit mode). The caller therefore got the wrong row count
@@ -381,7 +380,7 @@ def cache_clear(cache_dir: Path | None = None) -> int:
         return 0
     deleted = 0
     try:
-        # POLYLENS run #5 P1 (Gemini): cross-process lock so a parallel
+        # cross-process lock so a parallel
         # daemon doesn't observe a half-cleared cache and so the daemon's
         # ``cache_get`` doesn't trip over our DELETE+VACUUM.
         with QueueLock(lock_path(cache_dir), timeout_s=10.0), _CONN_LOCK:

@@ -1,4 +1,4 @@
-"""Shadow scorer — run NaiveScorer + DevcodeScorer in parallel (FEAT-2).
+"""Shadow scorer — run NaiveScorer + DevcodeScorer in parallel .
 
 The shadow scorer always **returns the naive result as the live
 winner** — it never changes the actual run output. In parallel it
@@ -40,7 +40,7 @@ def shadow_log_path(override: Path | None = None) -> Path:
 class DivergenceState(StrEnum):
     """Qualitative bucket for a scorer comparison.
 
-    POLYLENS run #5 P3 (Kimi): a plain ``str`` field accepted any value;
+    a plain ``str`` field accepted any value;
     a typo in ``_classify_divergence`` would have been silently
     persisted. ``StrEnum`` gives Pydantic a closed value set so the
     bucket stays consistent over time.
@@ -65,12 +65,12 @@ class DivergenceState(StrEnum):
 class ShadowDivergence(BaseModel):
     """One scorer comparison record (closed schema).
 
-    POLYLENS run #3 P2 (Gemini + Qwen convergent): the previous
+    the previous
     ``diverged: bool`` field conflated three distinct states. The
     ``divergence_state`` enum was introduced to separate them so the
     operator can filter abstain-noise out of weekly reports.
 
-    POLYLENS run #5 P2/P3 (Gemini + Grok + Kimi convergent): the run
+    /P3: the run
     #4 ``diverged`` semantic flip (strict ``picked_different`` only)
     silently broke historic dashboards that aggregated ``diverged=True``
     on the older permissive contract. ``schema_version`` now bumps to
@@ -143,7 +143,7 @@ class ShadowScorer:
         # kernel) is logged and swallowed: the shadow run must NEVER
         # impact the live pipeline.
         #
-        # POLYLENS run #2 P2 (Kimi finding #9): the previous catch-all
+        # the previous catch-all
         # ``except Exception`` swallowed ``MemoryError`` and
         # ``RecursionError`` too, masking catastrophic scorer failures
         # behind a "shadow_devcode_failed" log line. Narrowing to the
@@ -206,11 +206,11 @@ class ShadowScorer:
         # filter ends up picking. We approximate that by taking the
         # top-score not-disqualified entry, mirroring the pipeline.
         naive_winner_voice_id = self._derive_naive_winner(naive)
-        # POLYLENS run #3 P2 (Gemini + Qwen convergent): split the
+        # split the
         # divergence detection into qualitative states so abstain-noise
         # is filterable.
         #
-        # POLYLENS run #4 P1 (Qwen + Perplexity convergent): the run-#3
+        # the run-#3
         # fix added ``divergence_state`` but kept ``diverged=True`` for
         # ``devcode_abstained`` / ``naive_abstained`` "for backward
         # compat" — which silently re-introduced the calibration noise

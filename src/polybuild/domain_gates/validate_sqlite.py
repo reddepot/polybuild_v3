@@ -64,7 +64,7 @@ def validate_sqlite_db(
     schema_diff: list[str] = []
 
     try:
-        # Round 5 fix [F] (Audit 4 P0): `?mode=ro` alone fails on WAL prod DBs
+        # (Audit 4 P0): `?mode=ro` alone fails on WAL prod DBs
         # because SQLite still tries to manage -wal/-shm sidecar files. Adding
         # `immutable=1` tells SQLite the file/sidecars won't change, allowing
         # truly read-only access to a production WAL DB mounted RO via Docker.
@@ -120,7 +120,7 @@ def validate_sqlite_db(
                     schema_diff.append(f"removed: {sorted(removed)}")
                     errors.append(f"schema_objects_removed: {sorted(removed)}")
                 if changed:
-                    # Round 5 fix [I] (Audit 3 P1): changed schema = breaking change
+                    # (Audit 3 P1): changed schema = breaking change
                     # too. The whole point of the gate is non-régression schéma.
                     schema_diff.append(f"changed: {sorted(changed)}")
                     errors.append(f"schema_objects_changed: {sorted(changed)}")

@@ -4,7 +4,7 @@ asyncio.gather with return_exceptions=True ensures that one voice failing
 doesn't crash the others. A voice that times out or fails is dropped, but
 the run continues with the remaining 2 (acquis convergent rounds 1-4).
 
-Round 8 fix [P2-limiter] (5/6 audits convergence — Grok, Kimi, DeepSeek,
+(5/6 audits convergence — Grok, Kimi, DeepSeek,
 ChatGPT, implicite Gemini Q2):
     The TODO from round 4 was never closed. Phase 2 was launching all
     voices via raw asyncio.gather, bypassing CLILimiter entirely. Result:
@@ -78,7 +78,7 @@ async def phase_2_generate(
         async def _call() -> BuilderResult:
             return await builder.generate(spec, cfg)
 
-        # Round 10.1 fix [Kimi P1 #8]: forward the per-voice timeout to the
+        # forward the per-voice timeout to the
         # limiter as exec_timeout_s. Without this the limiter's default
         # 1800s ceiling masked the 720s/360s budgets configured in
         # ``config/timeouts.yaml`` and a stuck CLI could block the run for

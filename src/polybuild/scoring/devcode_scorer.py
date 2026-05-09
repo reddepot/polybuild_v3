@@ -100,7 +100,7 @@ class DevcodeScorer:
             )
 
         # Lazy imports — pulling devcode in only when actually needed
-        # (M2A.3 contract). The adapter and the math kernel both raise
+        #. The adapter and the math kernel both raise
         # ImportError if the optional ``[devcode]`` extra is not installed.
         from devcode.aggregation import devcode_vote_v1
 
@@ -109,7 +109,7 @@ class DevcodeScorer:
             option_to_voice_id,
         )
 
-        # POLYLENS run #3 P1 (qwen3.6-max-preview): an unmapped POLYBUILD
+        # an unmapped POLYBUILD
         # family (e.g. ``"xai"`` if a Grok voice is added to a profile
         # without first updating ``_FAMILY_MAP``) raised a bare
         # ``ValueError`` from ``builder_results_to_devcode_votes`` that
@@ -121,7 +121,7 @@ class DevcodeScorer:
             votes, ctx = builder_results_to_devcode_votes(
                 results, naive_result.voice_scores, spec
             )
-            # POLYLENS run #5 P2 (Gemini): the Schulze + Glicko + cosine
+            # the Schulze + Glicko + cosine
             # collusion math is CPU-bound and on a panel of ≥4 voices
             # can run for tens of milliseconds. The previous synchronous
             # call blocked the asyncio event loop for that whole window,

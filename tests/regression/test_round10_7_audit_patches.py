@@ -70,14 +70,14 @@ class TestSymlinkSkippedInTreeHash:
     def test_tree_hash_skips_symlinks(self) -> None:
         src = _read("phases/phase_5_triade.py")
         # The relevant `_tree_hash` body must mention is_symlink() in its
-        # filter clause to avoid LFI via symlink-to-host-file.
+        # filter clause to avoid LFI via symlink-to-host-file. The
+        # archaeology asserts (commit-tag presence, finding-id citation)
+        # have been dropped — they were test-theatre flagged across
+        # multiple POLYLENS audits as protecting nothing.
         idx = src.find("def _tree_hash(root: Path)")
         assert idx > 0
         body = src[idx : idx + 700]
         assert "p.is_symlink()" in body
-        # Comment cites Round 10.7 + the Kimi C-06 finding
-        assert "Round 10.7" in body
-        assert "C-06" in body
 
 
 # ──────────────────────────────────────────────────────────────────────

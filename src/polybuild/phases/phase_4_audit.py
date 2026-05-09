@@ -32,7 +32,7 @@ from polybuild.phases.phase_1_select import select_auditor
 
 logger = structlog.get_logger()
 
-# Round 10.7 fix [Qwen D-05 P1 + Gemini validation P12 high-risk]: allow-list
+# allow-list
 # of OpenRouter provider prefixes used by ``is_or_bound``. Detect by the
 # presence of any of these prefixes — never by "any slash" — so that local
 # model paths (``./models/llama``) and HF cache paths are not misrouted.
@@ -51,13 +51,12 @@ _OR_PROVIDER_PREFIXES = (
     "z-ai/",
 )
 
-# Round 10.2 fix [Gemini RX-102-02 + Qwen RX-002] caps for the audit prompt.
+# caps for the audit prompt.
 _MAX_FILE_BYTES = 256 * 1024
 _MAX_AUDIT_BYTES = 1024 * 1024
 
 
-# Round 10.4 fix [Kimi P0 — auditor_family "unknown" for CLI adapters]:
-# the previous fallback ``auditor_voice.split("/")[0] if "/" in voice
+# # the previous fallback ``auditor_voice.split("/")[0] if "/" in voice
 # else "unknown"`` returned ``"unknown"`` for every CLI-routed model
 # (claude-opus-4.7, gpt-5.5, gemini-3.1-pro, kimi-k2.6), disabling the
 # anti-collusion check in pick_triade. The mapping below recovers the
@@ -112,7 +111,7 @@ async def _invoke_auditor(
 ) -> AuditReport:
     """Send the winner's code to an auditor and parse the structured findings.
 
-    Round 10.2 fix [Gemini RX-102-02 + Qwen RX-002] (2/3 conv, P1): the
+    (2/3 conv, P1): the
     audit prompt previously concatenated *every* generated .py without an
     upper bound. A single large mock-data file (or an attacker that emits
     a 5 MB payload) was enough to either explode the auditor's context
@@ -130,7 +129,7 @@ async def _invoke_auditor(
     def _read_capped(
         py_file: Path, current_total: int
     ) -> tuple[str, int]:
-        # Round 10.3 fix [ChatGPT P4-307]: budget tracked in BYTES not
+        # budget tracked in BYTES not
         # chars so a Unicode-dense file doesn't slip past _MAX_AUDIT_BYTES.
         try:
             content = py_file.read_text(encoding="utf-8")
@@ -150,7 +149,7 @@ async def _invoke_auditor(
             content_bytes = len(content.encode("utf-8"))
         return content, current_total + content_bytes
 
-    # Round 10.3 fix [Kimi RX-304 / Qwen]: skip symlinks at audit too.
+    # skip symlinks at audit too.
     # An attacker-planted symlink to /etc/passwd would otherwise read
     # the target into the audit prompt, leaking host secrets.
     from polybuild.security.prompt_sanitizer import sanitize_prompt_context
@@ -164,8 +163,7 @@ async def _invoke_auditor(
             logger.warning("audit_symlink_skipped_in_code", path=str(py_file))
             continue
         body, total_bytes = _read_capped(py_file, total_bytes)
-        # Round 10.3 fix [Grok RX-401-05 + DeepSeek + ChatGPT P4-304]
-        # (3/5 conv P0): the code under audit is untrusted evidence —
+        #         # (3/5 conv P0): the code under audit is untrusted evidence —
         # docstrings or comments may carry "ignore previous instructions"
         # directives aimed at the auditor LLM. Sanitize the body before
         # injection.
@@ -238,8 +236,7 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
 """
 
     api_key = os.environ.get("OPENROUTER_API_KEY")
-    # Round 10.3 fix [DeepSeek RX-301-02 + Kimi RX-302 + Gemini chain]
-    # (3/5 conv, P0): when the API key is missing AND the auditor is bound
+    #     # (3/5 conv, P0): when the API key is missing AND the auditor is bound
     # to OpenRouter, the previous behaviour was to silently return an
     # empty AuditReport. The orchestrator then accepted the empty audit,
     # the run proceeded and committed without any audit findings — a
@@ -247,8 +244,7 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
     # auditors and only soft-warn for adapter-routed ones (which can
     # work without OPENROUTER_API_KEY when claude/codex/gemini are
     # configured locally).
-    # Round 10.7 fix [Qwen D-05 P1 + Gemini validation P12 high-risk]:
-    # allow-list of OR provider prefixes (defined module-level above).
+    #     # allow-list of OR provider prefixes (defined module-level above).
     is_or_bound = auditor_voice.startswith(_OR_PROVIDER_PREFIXES)
     if not api_key and is_or_bound:
         logger.error(
@@ -269,7 +265,7 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
 
     start = time.monotonic()
 
-    # Round 9 fix [Kimi-audit-fallback] (Kimi P0):
+    # (Kimi P0):
     #   Previous fallback hardcoded `claude code --model {voice}` for every
     #   non-OpenRouter auditor. If the routing config promotes GPT-5.5,
     #   Gemini, or Kimi as auditor, the subprocess crashes immediately:
@@ -292,7 +288,7 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
                 },
             )
             response.raise_for_status()
-            # Round 10.7 fix [Qwen D-02 + GLM A-05, 2/5 conv P0]: same
+            # same
             # malformed-response defence as adapters/openrouter.py — the
             # audit-time OR call must not crash Phase 4 if ``choices`` is
             # missing or ``content`` is None (rate-limit/refusal payloads).
@@ -316,7 +312,7 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
         builder = get_builder(auditor_voice)
         # run_raw_prompt: adapters with [O3] honour cfg.context["raw_prompt"]
         # and bypass the generation wrapper, returning the raw model output.
-        # Round 10 fix [S108]: ephemeral isolated tempdir instead of /tmp
+        # ephemeral isolated tempdir instead of /tmp
         # (race + symlink attack vector flagged by ruff S108 / bandit B108).
         with tempfile.TemporaryDirectory(prefix="polybuild_audit_") as audit_tmp:
             content = await builder.run_raw_prompt(
@@ -339,7 +335,7 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
             axes_audited=axes,
         )
 
-    # Round 10.7 fix [Qwen D-01 P1]: a valid JSON document might be a list
+    # a valid JSON document might be a list
     # or a string, not the dict-shaped object the schema expects.
     # ``data.get(...)`` would raise ``AttributeError`` and crash the run.
     # Reject non-dict payloads with the same soft-fail path used for
@@ -389,7 +385,7 @@ DO NOT propose fixes. DO NOT rewrite code. ONLY identify issues with reproducibl
             parse_errors.append(str(e))
             continue
 
-    # Round 10.3 fix [ChatGPT P4-305]: if the auditor returned a
+    # if the auditor returned a
     # non-empty list of findings but ALL of them failed to parse,
     # accepting the audit as "clean" would silently hide real issues.
     # Fail loud instead.
@@ -451,7 +447,7 @@ async def phase_4_audit(
             attempt=attempt,
         )
         # Pick another auditor from the pool.
-        # Round 10.3 fix [ChatGPT P4-303 + DeepSeek 2] (2/5 conv P0):
+        # (2/5 conv P0):
         # the previous version reused the raw routing pool, so a retry
         # under ``excludes_openrouter=True`` could re-admit an OR-bound
         # auditor that Phase 1 had filtered out. Apply the same filter
@@ -467,8 +463,7 @@ async def phase_4_audit(
             break
         auditor = alternatives[0]
 
-    # Round 10.3 fix [Qwen RX-301-01 + Kimi RX-302 + DeepSeek backlog]
-    # (3/5 conv, P0): if every retry produced a lazy audit (0 findings AND
+    #     # (3/5 conv, P0): if every retry produced a lazy audit (0 findings AND
     # under 60s) we previously returned the empty report and let the run
     # proceed. That bypasses the orthogonal review gate entirely. We now
     # raise so the orchestrator aborts deterministically — better a hard

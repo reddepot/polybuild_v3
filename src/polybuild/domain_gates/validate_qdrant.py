@@ -23,7 +23,7 @@ logger = structlog.get_logger()
 
 
 def _qdrant_url_is_safe(url: str) -> bool:
-    """Round 10.8 fix [ChatGPT A-04 P1] — SSRF guard for ``qdrant_url``.
+    """— SSRF guard for ``qdrant_url``.
 
     Reject:
       * non-http(s) schemes
@@ -95,7 +95,7 @@ async def validate_qdrant_collection(
         sample_vector: Optional vector for a search smoke test.
                        If None, generates a zero-vector of expected_dim.
         timeout_s: HTTP timeout per call.
-        vector_name: Round 5 fix [J] (Audits 3+4): named-vector support.
+        vector_name: (Audits 3+4): named-vector support.
                      If the collection has named vectors, must be passed
                      either explicitly here or auto-detected from config.
     """
@@ -108,7 +108,7 @@ async def validate_qdrant_collection(
             errors=["httpx_unavailable"],
         )
 
-    # Round 10.8 fix [ChatGPT A-04 P1, cross-voice audit]: SSRF guard.
+    # SSRF guard.
     # ``qdrant_url`` may originate from user / config and was previously
     # used verbatim. Reject schemes other than http/https, reject
     # private/loopback/link-local addresses unless explicitly allowed.
@@ -146,7 +146,7 @@ async def validate_qdrant_collection(
         if isinstance(config, dict) and "size" in config:
             actual_dim = int(config.get("size", 0))
         elif isinstance(config, dict):
-            # Round 5 fix [J]: track the vector name so search uses correct payload.
+            # track the vector name so search uses correct payload.
             for name, v_cfg in config.items():
                 if isinstance(v_cfg, dict) and "size" in v_cfg:
                     detected_vector_name = detected_vector_name or str(name)
@@ -163,7 +163,7 @@ async def validate_qdrant_collection(
         # ── Sample search query ─────────────────────────────────────
         if not errors:
             vec = sample_vector if sample_vector else [0.0] * expected_dim
-            # Round 5 fix [J]: named-vector payload format.
+            # named-vector payload format.
             search_payload: dict[str, Any] = {"limit": 3, "with_payload": False}
             if detected_vector_name:
                 search_payload["vector"] = {"name": detected_vector_name, "vector": vec}
@@ -210,7 +210,7 @@ def validate_qdrant_collection_sync(
 ) -> QdrantGateResult:
     """Sync wrapper for non-async callers.
 
-    Round 5 fix [W] (Audit 5 P2): refuses to run if already inside an
+    (Audit 5 P2): refuses to run if already inside an
     asyncio loop (was raising RuntimeError opaquely from asyncio.run).
     """
     try:
