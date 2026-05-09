@@ -519,6 +519,38 @@ class TestRunner:
         assert findings == []
         assert called == []
 
+    def test_extract_commit_diff_arg_max_byte_guard(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """POLYLENS run #2 P2: a single ENORMOUS minified line slips
+        past ``MAX_DIFF_LINES`` because the line cap counts newlines.
+        The byte cap must still kick in to keep the prompt from
+        blowing ARG_MAX when passed to a CLI."""
+        from polybuild.audit.runner import (
+            MAX_DIFF_BYTES,
+            extract_commit_diff,
+        )
+
+        # Build a fake `git show` output: one line, 2 MB long.
+        giant = "+x" + ("A" * (2 * 1024 * 1024))
+
+        class _FakeProc:
+            returncode = 0
+            stdout = giant
+
+        monkeypatch.setattr(
+            "polybuild.audit.runner.shutil.which", lambda _name: "/usr/bin/git"
+        )
+        monkeypatch.setattr(
+            "polybuild.audit.runner.subprocess.run",
+            lambda *_a, **_kw: _FakeProc(),
+        )
+        result = extract_commit_diff(tmp_path, "abc1234")
+        assert len(result.encode("utf-8")) <= MAX_DIFF_BYTES + 200
+        assert "ARG_MAX guard" in result
+
 
 # ────────────────────────────────────────────────────────────────
 # DEFAULT VOICE CALLER — silent fallback when binaries missing

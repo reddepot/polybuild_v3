@@ -57,6 +57,11 @@ logger = structlog.get_logger()
 
 VOICE_TIMEOUT_S = 30.0
 MAX_DIFF_LINES = 200
+# POLYLENS run #2 P2 (gpt-5.5): a single ENORMOUS minified line bypasses
+# the line-count cap and explodes the OS ARG_MAX when the prompt is
+# passed to a CLI as argv. macOS ARG_MAX is ~1 MB — we cap well under
+# that (~64K tokens at 4 bytes/token average).
+MAX_DIFF_BYTES = 256_000
 MAX_COST_USD = 0.30
 DEFAULT_AXES: tuple[Axis, ...] = ("A_security", "C_tests", "G_adversarial")
 
@@ -428,14 +433,25 @@ def extract_commit_diff(
 
     lines = out.stdout.splitlines()
     if len(lines) <= max_lines:
-        return out.stdout
+        result = out.stdout
+    else:
+        truncated = lines[:max_lines]
+        truncated.append(
+            f"... [truncated {len(lines) - max_lines} more diff lines, "
+            f"audit budget = {max_lines} lines]"
+        )
+        result = "\n".join(truncated)
 
-    truncated = lines[:max_lines]
-    truncated.append(
-        f"... [truncated {len(lines) - max_lines} more diff lines, "
-        f"audit budget = {max_lines} lines]"
-    )
-    return "\n".join(truncated)
+    # POLYLENS run #2 P2 (gpt-5.5): a single enormous minified line can
+    # slip past the line-count cap and blow ARG_MAX when the prompt is
+    # passed to a CLI as argv. Cap total bytes too.
+    encoded = result.encode("utf-8")
+    if len(encoded) > MAX_DIFF_BYTES:
+        result = encoded[:MAX_DIFF_BYTES].decode("utf-8", errors="ignore")
+        result += (
+            f"\n... [truncated to {MAX_DIFF_BYTES} bytes (ARG_MAX guard)]"
+        )
+    return result
 
 
 # ────────────────────────────────────────────────────────────────
