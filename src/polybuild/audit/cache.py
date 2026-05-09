@@ -85,6 +85,13 @@ def _get_conn(db_path: Path) -> sqlite3.Connection:
             "CREATE INDEX IF NOT EXISTS llm_cache_voice "
             "ON llm_cache(voice_id, cached_at)"
         )
+        # POLYLENS run #2 P2 (minimax): SQLite creates the .db with the
+        # process umask, which on a default system makes it group/world
+        # readable. The cache holds verbatim audit prompts and voice
+        # responses — both can contain code excerpts and findings the
+        # user expects to keep private. Tighten to 0o600 best-effort.
+        with contextlib.suppress(OSError):
+            db_path.chmod(0o600)
         _CONN_CACHE[db_path] = conn
         return conn
 
