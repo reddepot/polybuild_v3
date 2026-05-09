@@ -644,8 +644,14 @@ class TestLLMCache:
         d = make_cache_key("codex-gpt-5.5", "p", {"y": 2, "x": 1})
         assert c == d
 
-    def test_cache_get_put_roundtrip(self, tmp_path: Path) -> None:
+    def test_cache_get_put_roundtrip(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from polybuild.audit.cache import cache_get, cache_put, make_cache_key
+
+        # POLYLENS run #2 P1: cache is opt-in by default, so the test
+        # must enable it to exercise put + get.
+        monkeypatch.setenv("POLYBUILD_LLM_CACHE_ENABLE", "1")
 
         key = make_cache_key("codex-gpt-5.5", "test prompt")
         # Miss before put.
@@ -661,19 +667,48 @@ class TestLLMCache:
         # Hit after put.
         assert cache_get(key, cache_dir=tmp_path) == "cached output"
 
-    def test_cache_disabled_via_env(
+    def test_cache_off_by_default(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """POLYLENS run #2 P1: without ``POLYBUILD_LLM_CACHE_ENABLE=1``,
+        both put and get are no-ops. A poisoned response cannot be
+        served back on subsequent runs because there is no cache file."""
         from polybuild.audit.cache import cache_get, cache_put, make_cache_key
 
-        # Put a value normally.
+        monkeypatch.delenv("POLYBUILD_LLM_CACHE_ENABLE", raising=False)
         key = make_cache_key("codex-gpt-5.5", "test")
         cache_put(key, voice_id="codex-gpt-5.5", response="x", cache_dir=tmp_path)
-        # Then disable: get returns None even though the value is there.
-        monkeypatch.setenv("POLYBUILD_LLM_CACHE_DISABLE", "1")
         assert cache_get(key, cache_dir=tmp_path) is None
 
-    def test_cache_stats_and_clear(self, tmp_path: Path) -> None:
+    def test_cache_ttl_expiry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """POLYLENS run #2 P1: entries older than the TTL are treated as
+        misses even if the row is still in the database."""
+        from polybuild.audit.cache import (
+            _get_conn,
+            cache_db_path,
+            cache_get,
+            cache_put,
+            make_cache_key,
+        )
+
+        monkeypatch.setenv("POLYBUILD_LLM_CACHE_ENABLE", "1")
+        monkeypatch.setenv("POLYBUILD_LLM_CACHE_TTL_DAYS", "7")
+
+        key = make_cache_key("codex-gpt-5.5", "stale")
+        cache_put(key, voice_id="codex-gpt-5.5", response="ok", cache_dir=tmp_path)
+        # Forge the row's cached_at to be 30 days old.
+        from datetime import UTC, datetime, timedelta
+
+        old = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+        conn = _get_conn(cache_db_path(tmp_path))
+        conn.execute("UPDATE llm_cache SET cached_at = ? WHERE key = ?", (old, key))
+        assert cache_get(key, cache_dir=tmp_path) is None
+
+    def test_cache_stats_and_clear(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from polybuild.audit.cache import (
             cache_clear,
             cache_put,
@@ -681,6 +716,7 @@ class TestLLMCache:
             make_cache_key,
         )
 
+        monkeypatch.setenv("POLYBUILD_LLM_CACHE_ENABLE", "1")
         for i in range(3):
             cache_put(
                 make_cache_key("codex-gpt-5.5", f"p{i}"),

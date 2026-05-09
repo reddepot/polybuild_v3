@@ -12,7 +12,15 @@ Cache key = SHA-256(voice_id || \\0 || prompt || \\0 || params_json).
 Changing the prompt or any param invalidates the cache; the user does
 NOT need to flush manually after a runner refactor.
 
-Disabled per-call via env ``POLYBUILD_LLM_CACHE_DISABLE=1``.
+POLYLENS run #2 P1 (gpt-5.5 + gemini + minimax convergent): the cache
+is now **opt-in** (default off) with a 7-day TTL. A successful prompt
+injection that poisons one voice's response would otherwise be served
+back forever from cache. The opt-in pivot also means the cache only
+kicks in for users who actively want it (prompt iteration), not for
+every audit run.
+
+Enable via env ``POLYBUILD_LLM_CACHE_ENABLE=1``. Override the TTL via
+``POLYBUILD_LLM_CACHE_TTL_DAYS=<int>`` (default 7).
 Disabled globally by deleting ``~/.polybuild/audit/llm_cache.db``.
 """
 
@@ -24,7 +32,7 @@ import json
 import os
 import sqlite3
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -102,9 +110,35 @@ def make_cache_key(
     return h.hexdigest()
 
 
+def cache_enabled() -> bool:
+    """Per-call enable flag.
+
+    POLYLENS run #2 P1: defaults to **OFF**. The audit cache must be
+    opt-in so a poisoned voice response cannot be served back forever
+    on every subsequent run.
+    """
+    return os.environ.get("POLYBUILD_LLM_CACHE_ENABLE", "0") == "1"
+
+
 def cache_disabled() -> bool:
-    """Check the per-call disable flag."""
-    return os.environ.get("POLYBUILD_LLM_CACHE_DISABLE", "0") == "1"
+    """Deprecated alias retained for backwards compatibility.
+
+    Prefer :func:`cache_enabled`. Returns ``not cache_enabled()`` so
+    legacy call sites still see "disabled" when the env var is unset.
+    """
+    return not cache_enabled()
+
+
+def _cache_ttl() -> timedelta:
+    """Resolved cache TTL — default 7 days, overridable via env."""
+    raw = os.environ.get("POLYBUILD_LLM_CACHE_TTL_DAYS", "7")
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        days = 7
+    # Negative or zero TTL effectively disables hits without disabling
+    # writes — accepted, matches the "always miss" use case for tests.
+    return timedelta(days=max(days, 0))
 
 
 def cache_get(
@@ -112,8 +146,8 @@ def cache_get(
     *,
     cache_dir: Path | None = None,
 ) -> str | None:
-    """Return the cached response for ``key`` or ``None`` on miss / disable."""
-    if cache_disabled():
+    """Return the cached response for ``key`` or ``None`` on miss / disable / expiry."""
+    if not cache_enabled():
         return None
     db = cache_db_path(cache_dir)
     if not db.exists():
@@ -121,13 +155,23 @@ def cache_get(
     try:
         conn = _get_conn(db)
         row = conn.execute(
-            "SELECT response FROM llm_cache WHERE key = ?",
+            "SELECT response, cached_at FROM llm_cache WHERE key = ?",
             (key,),
         ).fetchone()
     except sqlite3.Error as e:
         logger.warning("llm_cache_get_failed", error=str(e), key_first_8=key[:8])
         return None
-    return row[0] if row else None
+    if not row:
+        return None
+    response, cached_at_str = row
+    try:
+        cached_at = datetime.fromisoformat(cached_at_str)
+    except (TypeError, ValueError):
+        # Corrupted timestamp — treat as miss rather than crash.
+        return None
+    if datetime.now(UTC) - cached_at > _cache_ttl():
+        return None
+    return str(response)
 
 
 def cache_put(
@@ -144,7 +188,7 @@ def cache_put(
     Best-effort: any sqlite error is logged and swallowed — the cache
     must never block the audit pipeline.
     """
-    if cache_disabled():
+    if not cache_enabled():
         return
     db = cache_db_path(cache_dir)
     try:
@@ -212,6 +256,7 @@ __all__ = [
     "cache_clear",
     "cache_db_path",
     "cache_disabled",
+    "cache_enabled",
     "cache_get",
     "cache_put",
     "cache_stats",
