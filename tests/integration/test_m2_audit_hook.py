@@ -751,6 +751,17 @@ class TestCostLog:
         assert estimate_usd("openai/gpt-5.5", None, 100) == 0.0
         assert estimate_usd("openai/gpt-5.5", 100, None) == 0.0
 
+    def test_estimate_usd_string_tokens(self) -> None:
+        """POLYLENS run #2 P2: OpenRouter sometimes returns token
+        counts as strings; defensive int coercion must keep the
+        multiplication from raising ``TypeError``."""
+        from polybuild.audit.cost_log import estimate_usd
+
+        # String inputs that look like ints are accepted (parsed).
+        assert estimate_usd("z-ai/glm-5.1", "1000", "500") > 0.0
+        # Non-numeric strings fall back to 0.0 instead of raising.
+        assert estimate_usd("z-ai/glm-5.1", "abc", "def") == 0.0
+
     def test_log_voice_call_appends(self, tmp_path: Path) -> None:
         from polybuild.audit.cost_log import log_voice_call, read_cost_log
 

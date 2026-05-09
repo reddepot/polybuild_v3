@@ -82,12 +82,22 @@ def estimate_usd(
 
     Returns ``0.0`` if either token count is missing or the voice is not
     in the pricing table — never raises.
+
+    POLYLENS run #2 P2 (gemini): OpenRouter occasionally returns token
+    counts as strings; the multiplication would otherwise raise
+    ``TypeError`` and crash the cost-log writer. Coerce defensively to
+    ``int`` and fall back to 0.0 on any conversion failure.
     """
     if tokens_prompt is None or tokens_completion is None:
         return 0.0
+    try:
+        in_tok = int(tokens_prompt)
+        out_tok = int(tokens_completion)
+    except (TypeError, ValueError):
+        return 0.0
     in_per_1m, out_per_1m = _OPENROUTER_PRICING.get(voice_id, _UNKNOWN_PRICING)
     return round(
-        (tokens_prompt * in_per_1m + tokens_completion * out_per_1m) / 1_000_000.0,
+        (in_tok * in_per_1m + out_tok * out_per_1m) / 1_000_000.0,
         6,
     )
 
