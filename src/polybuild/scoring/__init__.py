@@ -6,9 +6,13 @@ Public API:
   * ``ScoredResult`` — unified Pydantic output (consumed by
     ``polybuild.orchestrator.consensus_pipeline``).
   * ``NaiveScorer`` — default, current Phase 3 gate-based scoring.
-  * ``DevcodeScorer`` — opt-in, ``--scorer=devcode``. Imports the
-    optional ``devcode`` package lazily so the naive path stays free
-    of the dependency.
+
+POLYLENS run #4 P3 (DeepSeek): the ``_load_devcode_scorer`` lazy
+loader was removed. It had no callers in src/ or tests/ — the CLI
+imports ``DevcodeScorer`` directly via
+``polybuild.scoring.devcode_scorer`` and the optional-dependency
+guard happens inside that module's lazy ``from devcode... import``
+calls. Keeping the loader exported was dead public API surface.
 """
 
 from __future__ import annotations
@@ -22,24 +26,9 @@ from polybuild.scoring.protocol import (
 )
 from polybuild.scoring.shadow_scorer import ShadowScorer as ShadowScorer
 
-
-def _load_devcode_scorer():  # type: ignore[no-untyped-def]
-    """Lazy loader for :class:`DevcodeScorer`.
-
-    The ``devcode`` package is an optional dependency (extra
-    ``[devcode]``); importing the scorer module triggers the heavy
-    ``import devcode.aggregation``. Callers that stay on the naive
-    scorer never pay that cost.
-    """
-    from polybuild.scoring.devcode_scorer import DevcodeScorer
-
-    return DevcodeScorer
-
-
 __all__ = [
     "NaiveScorer",
     "ScoredResult",
     "ScorerProtocol",
     "ShadowScorer",
-    "_load_devcode_scorer",
 ]

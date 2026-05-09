@@ -187,15 +187,21 @@ class ShadowScorer:
         naive_winner_voice_id = self._derive_naive_winner(naive)
         # POLYLENS run #3 P2 (Gemini + Qwen convergent): split the
         # divergence detection into qualitative states so abstain-noise
-        # is filterable. ``diverged`` keeps its previous semantics
-        # (anything where the pipelines didn't agree on the same
-        # voice_id) for backward-compat dashboards.
+        # is filterable.
+        #
+        # POLYLENS run #4 P1 (Qwen + Perplexity convergent): the run-#3
+        # fix added ``divergence_state`` but kept ``diverged=True`` for
+        # ``devcode_abstained`` / ``naive_abstained`` "for backward
+        # compat" — which silently re-introduced the calibration noise
+        # the enum was supposed to remove. ``diverged`` is now strict:
+        # ``True`` ONLY when both scorers picked DIFFERENT voices.
+        # Abstain states surface via ``divergence_state`` for callers
+        # that need them.
         divergence_state = self._classify_divergence(
             devcode_winner=devcode.winner_voice_id,
             naive_winner=naive_winner_voice_id,
         )
-        diverged = divergence_state in {"picked_different", "devcode_abstained",
-                                        "naive_abstained"}
+        diverged = divergence_state == "picked_different"
 
         record = ShadowDivergence(
             run_id=spec.run_id,

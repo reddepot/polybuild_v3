@@ -139,13 +139,20 @@ class SoloPipeline:
             )
 
         # ── Phase 3: scoring SKIPPED — single voice is the winner. ──
-        # Stub a VoiceScore with empty gates so downstream code that
-        # iterates ``scores`` (PolybuildRun aggregation) keeps working.
-        # ``score=1.0`` reflects "no comparison available", not an actual
-        # quality verdict.
+        # Stub a VoiceScore so downstream code that iterates ``scores``
+        # (PolybuildRun aggregation) keeps working.
+        #
+        # POLYLENS run #4 P1 (Grok 4.3): the previous stub used
+        # ``score=1.0`` + all-green gates which made a solo run look
+        # like a perfect 1.0-score run in dashboards and metric
+        # exports. Now ``score=0.0`` + ``is_solo_stub=True`` so any
+        # consumer that wants to compute averages or "% of P0 audits
+        # surfaced" can explicitly skip the stub. Gates are still
+        # populated with neutral values so a downstream gate-checker
+        # doesn't ``KeyError`` on a ``None``.
         stub_score = VoiceScore(
             voice_id=voice.voice_id,
-            score=1.0,
+            score=0.0,
             gates=GateResults(
                 acceptance_pass_ratio=0.0,
                 bandit_clean=True,
@@ -157,6 +164,7 @@ class SoloPipeline:
                 diff_minimality=1.0,
             ),
             disqualified=False,
+            is_solo_stub=True,
         )
         save_checkpoint(
             run_id, "phase3",

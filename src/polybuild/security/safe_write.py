@@ -95,7 +95,12 @@ def write_files_to_worktree(
         # commit. Atomic write via ``mkstemp + fsync + replace``
         # guarantees either the old content (if interrupted) or the
         # new content (if completed) — never a half-flushed mix.
-        atomic_write_text(abs_path, source)
+        # POLYLENS run #4 P3 (Perplexity): pass ``parent_mode=0o755``
+        # so the worktree subdirectory is readable by the user's
+        # reviewer / CI runner. The audit-subsystem default of 0o700
+        # would surprise downstream pipelines that expect normal
+        # source-tree perms.
+        atomic_write_text(abs_path, source, parent_mode=0o755)
         written += 1
 
     return written

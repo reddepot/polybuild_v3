@@ -98,16 +98,27 @@ def sanitize_prompt_context(raw: str) -> str:
     # comment-hidden injection attempts before the strip pass erases
     # them. We do an NFKC-normalised lower compare so homoglyph
     # variants of "ignore" don't slip past.
+    #
+    # POLYLENS run #4 P2 (DeepSeek): a "directive" can also be a
+    # benign citation in legitimate documentation
+    # ("the linter must NOT ignore previous output of …"). Logging at
+    # ``warning`` level created false-positive noise that drowned the
+    # real attacks. Demoted to ``debug`` so the signal is preserved
+    # for forensic review (structlog stores it) without polluting the
+    # routine warning stream. The post-sanitize warning below stays
+    # at ``warning`` because surviving the strippers is much rarer
+    # and almost always intentional.
     raw_lower = unicodedata.normalize("NFKC", raw).lower()
     for needle in _SUSPICIOUS_DIRECTIVES:
         if needle in raw_lower:
-            logger.warning(
+            logger.debug(
                 "prompt_context_suspicious_directive_raw",
                 pattern=needle,
                 hint=(
                     "Directive detected in the raw context BEFORE "
-                    "comment/script stripping. The cleaned output may "
-                    "look benign but the source attempted injection."
+                    "comment/script stripping. May be a benign citation "
+                    "or a hidden injection — review the source if you "
+                    "see this for an unexpected document."
                 ),
             )
 

@@ -180,13 +180,23 @@ class GateResults(BaseModel):
 
 
 class VoiceScore(BaseModel):
-    """Final score and verdict for a single voice."""
+    """Final score and verdict for a single voice.
+
+    POLYLENS run #4 P1 (Grok 4.3): ``is_solo_stub`` flags entries
+    synthesised by ``SoloPipeline`` when Phase 3 is skipped — the
+    score is not the result of a real comparison, it's a placeholder
+    so ``PolybuildRun`` aggregation and downstream metrics keep
+    working. Dashboards and ``--scorer=devcode`` calibration MUST
+    filter out stub entries when computing averages, or they end up
+    treating a single-voice solo run as a perfect 1.0-score run.
+    """
 
     voice_id: str
     score: float
     gates: GateResults
     disqualified: bool = False
     disqualification_reason: str | None = None
+    is_solo_stub: bool = False
 
 
 # ────────────────────────────────────────────────────────────────

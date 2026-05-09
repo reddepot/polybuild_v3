@@ -453,6 +453,16 @@ async def _call_openrouter(
         "temperature": 0.1,
         "max_tokens": 2000,
     }
+    # POLYLENS run #4 P2 (Qwen): the previous ``except`` swallowed
+    # token counts that had been parsed BEFORE the failure point — a
+    # partial JSON response (``data["usage"]`` present but
+    # ``data["choices"]`` malformed) used to log ``success=False``
+    # WITHOUT tokens, dropping spend that did happen on OpenRouter's
+    # side. Now we capture token counts as soon as ``data`` is parsed
+    # and surface them in the cost log even on partial-failure paths.
+    tokens_prompt: int | None = None
+    tokens_completion: int | None = None
+    tokens_total: int | None = None
     try:
         async with httpx.AsyncClient(timeout=VOICE_TIMEOUT_S) as client:
             resp = await client.post(
@@ -472,18 +482,29 @@ async def _call_openrouter(
             _log_cost(success=False)
             return "", None, None
         data = resp.json()
-        choices = data.get("choices", [])
-        if not choices:
-            _log_cost(success=False)
-            return "", None, None
-        text = choices[0].get("message", {}).get("content", "")
-        if not isinstance(text, str):
-            _log_cost(success=False)
-            return "", None, None
+        # Pull cost metadata as early as possible so a downstream parse
+        # failure (malformed ``choices``) still records the tokens
+        # OpenRouter actually billed for.
         usage = data.get("usage") or {}
         tokens_prompt = usage.get("prompt_tokens")
         tokens_completion = usage.get("completion_tokens")
         tokens_total = usage.get("total_tokens")
+        choices = data.get("choices", [])
+        if not choices:
+            _log_cost(
+                tokens_prompt=tokens_prompt,
+                tokens_completion=tokens_completion,
+                success=False,
+            )
+            return "", None, None
+        text = choices[0].get("message", {}).get("content", "")
+        if not isinstance(text, str):
+            _log_cost(
+                tokens_prompt=tokens_prompt,
+                tokens_completion=tokens_completion,
+                success=False,
+            )
+            return "", None, None
         latency_s = time.monotonic() - t0
         _log_cost(
             tokens_prompt=tokens_prompt,
@@ -492,7 +513,11 @@ async def _call_openrouter(
         )
         return text, tokens_total, latency_s
     except (httpx.HTTPError, ValueError, KeyError):
-        _log_cost(success=False)
+        _log_cost(
+            tokens_prompt=tokens_prompt,
+            tokens_completion=tokens_completion,
+            success=False,
+        )
         return "", None, None
 
 
@@ -827,10 +852,22 @@ async def audit_commit(
 
     diff = extract_commit_diff(entry.repo_path, entry.commit_sha)
     if not diff:
-        logger.info(
-            "audit_diff_empty",
+        # POLYLENS run #4 P1 (Qwen): the previous ``info`` log was
+        # invisible to operators tailing only ``warning+`` levels. An
+        # empty diff is technically benign (merge-only / metadata
+        # commit) but it is ALSO the signal we'd see for a successful
+        # ``rm -rf src/* && git commit -am ...`` style attack — the
+        # audit pipeline runs but produces zero findings. Surface as a
+        # warning so the absence of an audit cycle is visible alongside
+        # routine drains.
+        logger.warning(
+            "audit_diff_empty_skipping_voices",
             commit_sha=entry.commit_sha,
             voices=pair.as_list(),
+            hint=(
+                "No diff to audit (merge-only commit, metadata-only commit, "
+                "or full deletion of working tree). Voices were NOT called."
+            ),
         )
         return []
 

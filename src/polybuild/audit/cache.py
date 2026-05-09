@@ -90,43 +90,47 @@ def _chmod_sqlite_files(db_path: Path) -> None:
 
 
 def _get_conn(db_path: Path) -> sqlite3.Connection:
-    """Return a cached connection for ``db_path`` (one per process)."""
+    """Return a cached connection for ``db_path`` (one per process).
+
+    POLYLENS run #4 P1 (Perplexity): ``os.umask`` is process-global and
+    not thread-local. The previous narrow-umask trick affected EVERY
+    other thread that happened to create files during the few hundred
+    microseconds the umask was tight — including unrelated artefacts in
+    a multi-threaded uvicorn / gunicorn worker. Replaced with explicit
+    ``chmod`` on the freshly-created files: marginally less atomic
+    (the file exists at umask perms for ~ms) but doesn't punish other
+    threads, and the local filesystem is single-user anyway.
+    """
     with _CONN_LOCK:
         existing = _CONN_CACHE.get(db_path)
         if existing is not None:
             return existing
         db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        # POLYLENS run #3 P0 — narrow the umask before sqlite3.connect
-        # creates the .db / .db-wal / .db-shm files so they are born
-        # 0o600 rather than 0o644-after-umask-022. Restored on exit so
-        # we don't tighten the umask for unrelated module work.
-        prev_umask = os.umask(0o077)
-        try:
-            conn = sqlite3.connect(
-                str(db_path),
-                check_same_thread=False,
-                isolation_level=None,  # autocommit; we manage txns explicitly
-            )
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS llm_cache (
-                    key          TEXT PRIMARY KEY,
-                    voice_id     TEXT NOT NULL,
-                    response     TEXT NOT NULL,
-                    cached_at    TEXT NOT NULL,
-                    tokens_total INTEGER,
-                    latency_s    REAL
-                ) WITHOUT ROWID
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS llm_cache_voice "
-                "ON llm_cache(voice_id, cached_at)"
-            )
-        finally:
-            os.umask(prev_umask)
+        with contextlib.suppress(OSError):
+            db_path.parent.chmod(0o700)
+        conn = sqlite3.connect(
+            str(db_path),
+            check_same_thread=False,
+            isolation_level=None,  # autocommit; we manage txns explicitly
+        )
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS llm_cache (
+                key          TEXT PRIMARY KEY,
+                voice_id     TEXT NOT NULL,
+                response     TEXT NOT NULL,
+                cached_at    TEXT NOT NULL,
+                tokens_total INTEGER,
+                latency_s    REAL
+            ) WITHOUT ROWID
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS llm_cache_voice "
+            "ON llm_cache(voice_id, cached_at)"
+        )
         _chmod_sqlite_files(db_path)
         _CONN_CACHE[db_path] = conn
         return conn
@@ -192,17 +196,17 @@ def cache_get(
     duration so concurrent callers (test workers, parallel audit
     drains) cannot race on the same connection's cursor.
 
-    For full metadata (``tokens_total``, ``latency_s``) see
-    :func:`cache_get_with_metadata` — POLYLENS run #3 P2 (KIMI Agent
-    Swarm) flagged that ``cache_put`` writes those columns but
-    ``cache_get`` never read them. The metadata-aware accessor closes
-    that gap without breaking the existing string-returning API.
+    Public callers only need the response string. Internal call-sites
+    that also want the cost metadata use the private
+    :func:`_cache_get_with_metadata` helper — POLYLENS run #4 P2
+    (Perplexity) flagged that exposing the tuple variant in ``__all__``
+    without an actual consumer is API surface for nobody.
     """
-    full = cache_get_with_metadata(key, cache_dir=cache_dir)
+    full = _cache_get_with_metadata(key, cache_dir=cache_dir)
     return full[0] if full is not None else None
 
 
-def cache_get_with_metadata(
+def _cache_get_with_metadata(
     key: str,
     *,
     cache_dir: Path | None = None,
@@ -212,10 +216,12 @@ def cache_get_with_metadata(
     POLYLENS run #3 P2 (KIMI Agent Swarm): the previous ``cache_put``
     happily wrote ``tokens_total`` and ``latency_s`` but ``cache_get``
     only read ``response`` + ``cached_at`` — the metadata columns
-    became orphaned write-only data. Cost dashboards that inspect the
-    cache to attribute "saved spend" had no signal to rely on. This
-    accessor closes the loop. Returns ``None`` on miss / disabled
-    cache / expired entry, mirroring :func:`cache_get`.
+    became orphaned write-only data. This accessor closes the loop.
+
+    POLYLENS run #4 P2 (Perplexity): kept private (underscore prefix,
+    not in ``__all__``) until a real cost dashboard or other consumer
+    actually needs the tuple form. Public ``cache_get`` calls into
+    this and discards the metadata tail.
     """
     if not cache_enabled():
         return None
@@ -300,16 +306,25 @@ def cache_put(
 
 
 def cache_stats(cache_dir: Path | None = None) -> dict[str, Any]:
-    """Return aggregate stats for the cache: row count, voices, size on disk."""
+    """Return aggregate stats for the cache: row count, voices, size on disk.
+
+    POLYLENS run #4 P1 (Perplexity + DeepSeek convergent): the previous
+    version called ``_get_conn`` then issued ``execute`` without holding
+    ``_CONN_LOCK`` — a concurrent ``cache_put`` from another thread (or
+    a parallel ``cache_clear`` from the CLI) could race the cursor and
+    produce a ``sqlite3.ProgrammingError``. Now serialised, mirroring
+    ``cache_get_with_metadata`` and ``cache_put``.
+    """
     db = cache_db_path(cache_dir)
     if not db.exists():
         return {"rows": 0, "voices": 0, "size_bytes": 0}
     try:
-        conn = _get_conn(db)
-        row_count = conn.execute("SELECT COUNT(*) FROM llm_cache").fetchone()[0]
-        voice_count = conn.execute(
-            "SELECT COUNT(DISTINCT voice_id) FROM llm_cache"
-        ).fetchone()[0]
+        with _CONN_LOCK:
+            conn = _CONN_CACHE.get(db) or _get_conn(db)
+            row_count = conn.execute("SELECT COUNT(*) FROM llm_cache").fetchone()[0]
+            voice_count = conn.execute(
+                "SELECT COUNT(DISTINCT voice_id) FROM llm_cache"
+            ).fetchone()[0]
     except sqlite3.Error as e:
         return {"error": str(e), "rows": 0, "voices": 0, "size_bytes": 0}
     size = 0
@@ -319,15 +334,22 @@ def cache_stats(cache_dir: Path | None = None) -> dict[str, Any]:
 
 
 def cache_clear(cache_dir: Path | None = None) -> int:
-    """Delete every entry. Returns the number of rows removed."""
+    """Delete every entry. Returns the number of rows removed.
+
+    POLYLENS run #4 P1 (Perplexity + DeepSeek convergent): now holds
+    ``_CONN_LOCK`` for the whole COUNT + DELETE + VACUUM sequence so a
+    concurrent ``cache_get`` cannot race on the same connection and
+    so ``VACUUM`` doesn't run while another thread is mid-transaction.
+    """
     db = cache_db_path(cache_dir)
     if not db.exists():
         return 0
     try:
-        conn = _get_conn(db)
-        before = conn.execute("SELECT COUNT(*) FROM llm_cache").fetchone()[0]
-        conn.execute("DELETE FROM llm_cache")
-        conn.execute("VACUUM")
+        with _CONN_LOCK:
+            conn = _CONN_CACHE.get(db) or _get_conn(db)
+            before = conn.execute("SELECT COUNT(*) FROM llm_cache").fetchone()[0]
+            conn.execute("DELETE FROM llm_cache")
+            conn.execute("VACUUM")
     except sqlite3.Error as e:
         logger.warning("llm_cache_clear_failed", error=str(e))
         return 0
@@ -339,7 +361,6 @@ __all__ = [
     "cache_db_path",
     "cache_enabled",
     "cache_get",
-    "cache_get_with_metadata",
     "cache_put",
     "cache_stats",
     "make_cache_key",

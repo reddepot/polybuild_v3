@@ -44,6 +44,18 @@ _OPENROUTER_PRICING: dict[str, tuple[float, float]] = {
     "minimax/m2.7":                 (0.10,  0.30),
     "xiaomi/mimo-v2.5-pro":         (0.05,  0.20),
     "anthropic/claude-opus-4-7":    (15.00, 75.00),  # rarely used by audit
+    # POLYLENS run #4 P2 (Perplexity): the table was de-synced from
+    # ``config/routing.yaml`` — the following slugs are referenced as
+    # active phase-2 voices but had no pricing entry, silently booking
+    # $0 (post-run #3 fix changed that to ``None`` + warning, but the
+    # warning fires on every run for each slug). Adding them here closes
+    # the loop. Prices below are the public OpenRouter listings as of
+    # 2026-05-09; bump alongside any future routing.yaml additions.
+    "deepseek/deepseek-v4-pro":     (0.65,  2.20),
+    "deepseek/deepseek-v4-flash":   (0.20,  0.60),
+    "x-ai/grok-4.20":               (3.00, 15.00),
+    "mistral/devstral-2":           (0.50,  1.50),
+    "qwen/qwen3.6-coder":           (0.40,  1.20),
 }
 
 # POLYLENS run #3 P2 (Gemini + Qwen + DeepSeek convergent): the

@@ -30,14 +30,28 @@ import tempfile
 from pathlib import Path
 
 
-def atomic_write_text(path: Path, payload: str) -> None:
+def atomic_write_text(
+    path: Path,
+    payload: str,
+    *,
+    parent_mode: int = 0o700,
+) -> None:
     """Replace ``path`` with ``payload`` atomically.
 
-    Creates parent directories with mode 0o700 if missing — the audit
-    subsystem stores per-user secrets-adjacent state and never wants
-    group/world readable directories.
+    Args:
+        path: destination file path.
+        payload: text to write.
+        parent_mode: mode for the parent directory if it has to be
+            created. Defaults to ``0o700`` because the helper grew up
+            in the audit subsystem (per-user state, secrets-adjacent).
+            POLYLENS run #4 P3 (Perplexity): callers writing to a
+            shared worktree (eg. ``polybuild.security.safe_write``)
+            override to ``0o755`` so CI runners and reviewers can
+            still read the generated source. The flag preserves the
+            audit-state default while letting non-audit callers opt
+            into a normal directory mode.
     """
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=parent_mode)
 
     fd, tmp_name = tempfile.mkstemp(
         dir=path.parent,
